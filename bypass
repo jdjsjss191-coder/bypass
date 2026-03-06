@@ -30,6 +30,11 @@ mt.__namecall = newcclosure(function(self, ...)
     local method = getnamecallmethod()
     local args = {...}
     
+    -- ALWAYS allow HttpGet (needed for loadstring scripts)
+    if method == "HttpGet" or method == "HttpGetAsync" then
+        return old_namecall(self, ...)
+    end
+    
     -- If it's our script, allow everything
     if checkcaller() then
         return old_namecall(self, ...)
