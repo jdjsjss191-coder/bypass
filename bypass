@@ -45,24 +45,22 @@ mt.__namecall = newcclosure(function(self, ...)
     if method == "FireServer" or method == "InvokeServer" then
         local name = tostring(self):lower()
         
-        -- Block by remote name
-        if name:find("kick") or name:find("ban") or name:find("detect") or 
-           name:find("adonis") or name:find("anti") or name:find("ac") or
-           name:find("security") or name:find("communication") or name:find("mainevent") then
+        -- Block by remote name (but allow game remotes)
+        if name:find("kick") or name:find("ban") or 
+           name:find("adonis") or name:find("ac_") or
+           name:find("security") then
             warn("[Nova Bypass] Blocked remote: " .. tostring(self))
             return
         end
         
-        -- Block by arguments
-        for i, arg in ipairs(args) do
-            if type(arg) == "string" then
-                local lower = arg:lower()
-                if lower:find("kick") or lower:find("ban") or lower:find("detect") or
-                   lower:find("adonis") or lower:find("exploit") or lower:find("cheat") or
-                   lower:find("namecall") or lower:find("communication") or lower:find("disconnect") then
-                    warn("[Nova Bypass] Blocked argument: " .. arg)
-                    return
-                end
+        -- Block by arguments (only check first argument to avoid blocking game logic)
+        if args[1] and type(args[1]) == "string" then
+            local lower = args[1]:lower()
+            if lower:find("kick") or lower:find("ban") or 
+               lower:find("adonis") or lower:find("communication") or 
+               lower:find("disconnect") or lower:find("detected") then
+                warn("[Nova Bypass] Blocked argument: " .. args[1])
+                return
             end
         end
     end
@@ -96,9 +94,10 @@ print("[Nova Bypass] Destroying Adonis scripts...")
 
 local function destroyAdonis()
     for _, obj in pairs(game:GetDescendants()) do
-        if obj:IsA("LocalScript") or obj:IsA("ModuleScript") or obj:IsA("Script") then
+        if obj:IsA("LocalScript") or obj:IsA("ModuleScript") then
             local name = obj.Name:lower()
-            if name:find("adonis") or name:find("anti") or name:find("ac_") then
+            -- Only destroy if it's specifically Adonis (not all anti-cheat scripts)
+            if name:find("adonis") or name == "ac_" or name == "anticheat" then
                 pcall(function()
                     obj.Disabled = true
                     obj:Destroy()
@@ -112,10 +111,10 @@ end
 -- Destroy immediately
 destroyAdonis()
 
--- Keep destroying in background
+-- Keep destroying in background (less frequently to avoid lag)
 task.spawn(function()
-    while task.wait(1) do
-        destroyAdonis()
+    while task.wait(2) do
+        pcall(destroyAdonis)
     end
 end)
 
@@ -241,8 +240,8 @@ end
 print("[Nova Bypass] Starting continuous protection...")
 
 task.spawn(function()
-    while task.wait(0.5) do
-        -- Continuously block any new Adonis scripts
+    while task.wait(2) do
+        -- Continuously block any new Adonis scripts (less frequently)
         pcall(destroyAdonis)
         
         -- Re-hook Player.Kick if it gets unhooked
@@ -260,7 +259,7 @@ end)
 
 print("[Nova Bypass] ✓✓✓ ULTRA BYPASS LOADED ✓✓✓")
 print("[Nova Bypass] All protections active!")
-print("[Nova Bypass] Adonis = DESTROYED")
+print("[Nova Bypass] Your scripts will load normally!")
 
 -- Return success
 return true
