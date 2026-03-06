@@ -1,16 +1,109 @@
--- Nova Custom Bypass
+-- Nova Custom Bypass - ULTRA AGGRESSIVE MODE
 -- Bypasses Adonis Anti-Cheat and Namecall Detection
-print("[Nova Bypass] Loading bypass...")
+print("[Nova Bypass] Loading ULTRA bypass...")
 
--- Wait for game to be fully loaded
+-- CRITICAL: Wait for game to be fully loaded
 if game and not game:IsLoaded() then
-    repeat wait() until game:IsLoaded()
+    repeat task.wait() until game:IsLoaded()
 end
 
-task.wait(2)
+-- Wait a bit for game to stabilize
+task.wait(1)
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
+
+-- ============================================================================
+-- DISABLE ADONIS BEFORE IT LOADS
+-- ============================================================================
+
+local function disableAdonisBeforeLoad()
+    -- Find and destroy Adonis before it can initialize
+    task.spawn(function()
+        while task.wait(0.1) do
+            for _, obj in pairs(game:GetDescendants()) do
+                if obj:IsA("ModuleScript") or obj:IsA("LocalScript") or obj:IsA("Script") then
+                    local name = obj.Name:lower()
+                    if name:find("adonis") or name:find("anti") or name:find("ac_") or name:find("anticheat") then
+                        pcall(function()
+                            obj.Disabled = true
+                            obj:Destroy()
+                        end)
+                        warn("[Nova Bypass] Destroyed Adonis component: " .. obj.Name)
+                    end
+                end
+            end
+        end
+    end)
+    
+    print("[Nova Bypass] Adonis destroyer active!")
+end
+
+-- ============================================================================
+-- BLOCK ALL KICK REMOTES
+-- ============================================================================
+
+local function blockAllKickRemotes()
+    local mt = getrawmetatable(game)
+    setreadonly(mt, false)
+    
+    local oldNamecall = mt.__namecall
+    
+    mt.__namecall = newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
+        
+        if not checkcaller() then
+            -- Block ALL FireServer/InvokeServer calls that might be kicks
+            if method == "FireServer" or method == "InvokeServer" then
+                local remoteName = tostring(self):lower()
+                
+                -- Block any remote that looks like it could kick
+                if remoteName:find("kick") or
+                   remoteName:find("ban") or
+                   remoteName:find("detected") or
+                   remoteName:find("security") or
+                   remoteName:find("anticheat") or
+                   remoteName:find("ac") or
+                   remoteName:find("adonis") or
+                   remoteName:find("communication") or
+                   remoteName:find("disconnect") then
+                    warn("[Nova Bypass] BLOCKED KICK REMOTE: " .. tostring(self))
+                    return
+                end
+                
+                -- Check arguments for kick-related content
+                for _, arg in ipairs(args) do
+                    if type(arg) == "string" then
+                        local lower = arg:lower()
+                        if lower:find("kick") or
+                           lower:find("ban") or
+                           lower:find("detected") or
+                           lower:find("adonis") or
+                           lower:find("communication") or
+                           lower:find("disconnect") or
+                           lower:find("exploit") or
+                           lower:find("cheat") then
+                            warn("[Nova Bypass] BLOCKED KICK ARGUMENT: " .. arg)
+                            return
+                        end
+                    end
+                end
+            end
+            
+            -- Block Kick method
+            if method == "Kick" then
+                warn("[Nova Bypass] BLOCKED KICK METHOD")
+                return
+            end
+        end
+        
+        return oldNamecall(self, ...)
+    end))
+    
+    setreadonly(mt, true)
+    print("[Nova Bypass] All kick remotes blocked!")
+end
 
 -- ============================================================================
 -- ADONIS COMMUNICATION BYPASS (Prevents "Communication following disconnect")
@@ -329,42 +422,50 @@ local function protectFromKick()
 end
 
 -- ============================================================================
--- INITIALIZE ALL BYPASSES (ORDER MATTERS!)
+-- INITIALIZE ALL BYPASSES (ULTRA AGGRESSIVE ORDER!)
 -- ============================================================================
 
 local function initializeBypass()
     local success, err = pcall(function()
-        -- CRITICAL: Load Adonis communication bypass FIRST
-        bypassAdonisCommunication()
-        task.wait(0.5)
+        -- STEP 1: Disable Adonis IMMEDIATELY
+        disableAdonisBeforeLoad()
+        task.wait(0.2)
         
-        -- Then load namecall protection
-        blockNamecallInstanceDetector()
+        -- STEP 2: Block ALL kick remotes
+        blockAllKickRemotes()
+        task.wait(0.2)
+        
+        -- STEP 3: Load Adonis communication bypass
+        bypassAdonisCommunication()
         task.wait(0.3)
+        
+        -- STEP 4: Load namecall protection
+        blockNamecallInstanceDetector()
+        task.wait(0.2)
         
         protectNamecallHook()
-        task.wait(0.3)
+        task.wait(0.2)
         
         spoofGetNamecallMethod()
-        task.wait(0.3)
+        task.wait(0.2)
         
         protectFromKick()
-        task.wait(0.3)
+        task.wait(0.2)
         
         bypassAdonis()
-        task.wait(0.3)
+        task.wait(0.2)
         
         protectRemotes()
-        task.wait(0.3)
+        task.wait(0.2)
         
-        print("[Nova Bypass] ✓ All bypasses loaded successfully!")
+        print("[Nova Bypass] ✓ ULTRA BYPASS LOADED!")
         print("[Nova Bypass] Protected against:")
+        print("  - Adonis Scripts (DESTROYED)")
+        print("  - ALL Kick Remotes (BLOCKED)")
         print("  - Adonis Communication Detection")
         print("  - Namecallinstance Detector")
-        print("  - Adonis Anti-Cheat")
         print("  - Namecall Detection")
         print("  - Remote Spy")
-        print("  - Kick/Ban")
         print("  - Crash Loops")
     end)
     
