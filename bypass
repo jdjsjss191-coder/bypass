@@ -1,481 +1,266 @@
--- Nova Custom Bypass - ULTRA AGGRESSIVE MODE
--- Bypasses Adonis Anti-Cheat and Namecall Detection
-print("[Nova Bypass] Loading ULTRA bypass...")
+-- Nova ULTRA Bypass - Loads BEFORE everything
+print("[Nova Bypass] ULTRA MODE LOADING...")
 
--- CRITICAL: Wait for game to be fully loaded
-if game and not game:IsLoaded() then
-    repeat task.wait() until game:IsLoaded()
+-- CRITICAL: Wait for game
+if not game:IsLoaded() then
+    game.Loaded:Wait()
 end
 
--- Wait a bit for game to stabilize
-task.wait(1)
+task.wait(0.5)
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
 -- ============================================================================
--- DISABLE ADONIS BEFORE IT LOADS
+-- STEP 1: HOOK EVERYTHING BEFORE ADONIS CAN DETECT
 -- ============================================================================
 
-local function disableAdonisBeforeLoad()
-    -- Find and destroy Adonis before it can initialize
-    task.spawn(function()
-        while task.wait(0.1) do
-            for _, obj in pairs(game:GetDescendants()) do
-                if obj:IsA("ModuleScript") or obj:IsA("LocalScript") or obj:IsA("Script") then
-                    local name = obj.Name:lower()
-                    if name:find("adonis") or name:find("anti") or name:find("ac_") or name:find("anticheat") then
-                        pcall(function()
-                            obj.Disabled = true
-                            obj:Destroy()
-                        end)
-                        warn("[Nova Bypass] Destroyed Adonis component: " .. obj.Name)
-                    end
-                end
-            end
-        end
-    end)
-    
-    print("[Nova Bypass] Adonis destroyer active!")
-end
+print("[Nova Bypass] Installing pre-emptive hooks...")
 
--- ============================================================================
--- BLOCK ALL KICK REMOTES
--- ============================================================================
+-- Store originals IMMEDIATELY
+local mt = getrawmetatable(game)
+local old_namecall = mt.__namecall
+local old_index = mt.__index
+local old_newindex = mt.__newindex
 
-local function blockAllKickRemotes()
-    local mt = getrawmetatable(game)
-    setreadonly(mt, false)
+setreadonly(mt, false)
+
+-- ULTRA AGGRESSIVE NAMECALL HOOK - Blocks EVERYTHING suspicious
+mt.__namecall = newcclosure(function(self, ...)
+    local method = getnamecallmethod()
+    local args = {...}
     
-    local oldNamecall = mt.__namecall
+    -- If it's our script, allow everything
+    if checkcaller() then
+        return old_namecall(self, ...)
+    end
     
-    mt.__namecall = newcclosure(function(self, ...)
-        local method = getnamecallmethod()
-        local args = {...}
+    -- Block Kick method entirely
+    if method == "Kick" then
+        warn("[Nova Bypass] Blocked Kick()")
+        return
+    end
+    
+    -- Block FireServer/InvokeServer with suspicious content
+    if method == "FireServer" or method == "InvokeServer" then
+        local name = tostring(self):lower()
         
-        if not checkcaller() then
-            -- Block ALL FireServer/InvokeServer calls that might be kicks
-            if method == "FireServer" or method == "InvokeServer" then
-                local remoteName = tostring(self):lower()
-                
-                -- Block any remote that looks like it could kick
-                if remoteName:find("kick") or
-                   remoteName:find("ban") or
-                   remoteName:find("detected") or
-                   remoteName:find("security") or
-                   remoteName:find("anticheat") or
-                   remoteName:find("ac") or
-                   remoteName:find("adonis") or
-                   remoteName:find("communication") or
-                   remoteName:find("disconnect") then
-                    warn("[Nova Bypass] BLOCKED KICK REMOTE: " .. tostring(self))
+        -- Block by remote name
+        if name:find("kick") or name:find("ban") or name:find("detect") or 
+           name:find("adonis") or name:find("anti") or name:find("ac") or
+           name:find("security") or name:find("communication") or name:find("mainevent") then
+            warn("[Nova Bypass] Blocked remote: " .. tostring(self))
+            return
+        end
+        
+        -- Block by arguments
+        for i, arg in ipairs(args) do
+            if type(arg) == "string" then
+                local lower = arg:lower()
+                if lower:find("kick") or lower:find("ban") or lower:find("detect") or
+                   lower:find("adonis") or lower:find("exploit") or lower:find("cheat") or
+                   lower:find("namecall") or lower:find("communication") or lower:find("disconnect") then
+                    warn("[Nova Bypass] Blocked argument: " .. arg)
                     return
                 end
-                
-                -- Check arguments for kick-related content
-                for _, arg in ipairs(args) do
-                    if type(arg) == "string" then
-                        local lower = arg:lower()
-                        if lower:find("kick") or
-                           lower:find("ban") or
-                           lower:find("detected") or
-                           lower:find("adonis") or
-                           lower:find("communication") or
-                           lower:find("disconnect") or
-                           lower:find("exploit") or
-                           lower:find("cheat") then
-                            warn("[Nova Bypass] BLOCKED KICK ARGUMENT: " .. arg)
-                            return
-                        end
-                    end
-                end
-            end
-            
-            -- Block Kick method
-            if method == "Kick" then
-                warn("[Nova Bypass] BLOCKED KICK METHOD")
-                return
             end
         end
-        
-        return oldNamecall(self, ...)
-    end))
+    end
     
-    setreadonly(mt, true)
-    print("[Nova Bypass] All kick remotes blocked!")
-end
+    return old_namecall(self, ...)
+end)
 
--- ============================================================================
--- ADONIS COMMUNICATION BYPASS (Prevents "Communication following disconnect")
--- ============================================================================
-
-local function bypassAdonisCommunication()
-    local old_identity = getthreadidentity()
-    setthreadidentity(2) -- Prevents "Adonis_0x16471" kick
-    
-    local mt = getrawmetatable(game)
-    setreadonly(mt, false)
-    
-    local oldNewIndex = mt.__newindex
-    
-    mt.__newindex = newcclosure(function(t, k, v)
+-- Block __newindex modifications (prevents Adonis from modifying things)
+mt.__newindex = newcclosure(function(t, k, v)
+    if not checkcaller() then
+        -- Block suspicious modifications
         if typeof(t) == "Instance" then
-            local className = t.ClassName or "Unknown"
             if k == "Parent" or k == "Name" then
-                -- Block Adonis from modifying Parent/Name
+                -- Silently ignore Adonis trying to modify Parent/Name
                 return
             end
         end
-        return oldNewIndex(t, k, v)
-    end)
-    
-    setreadonly(mt, true)
-    print("[Nova Bypass] __newindex hook installed (Adonis communication blocked)")
-    
-    -- Patch crash loops
-    task.spawn(function()
-        local patched = 0
+    end
+    return old_newindex(t, k, v)
+end)
+
+setreadonly(mt, true)
+
+print("[Nova Bypass] Core hooks installed!")
+
+-- ============================================================================
+-- STEP 2: DESTROY ADONIS SCRIPTS
+-- ============================================================================
+
+print("[Nova Bypass] Destroying Adonis scripts...")
+
+local function destroyAdonis()
+    for _, obj in pairs(game:GetDescendants()) do
+        if obj:IsA("LocalScript") or obj:IsA("ModuleScript") or obj:IsA("Script") then
+            local name = obj.Name:lower()
+            if name:find("adonis") or name:find("anti") or name:find("ac_") then
+                pcall(function()
+                    obj.Disabled = true
+                    obj:Destroy()
+                end)
+                warn("[Nova Bypass] Destroyed: " .. obj.Name)
+            end
+        end
+    end
+end
+
+-- Destroy immediately
+destroyAdonis()
+
+-- Keep destroying in background
+task.spawn(function()
+    while task.wait(1) do
+        destroyAdonis()
+    end
+end)
+
+-- ============================================================================
+-- STEP 3: HOOK PLAYER.KICK
+-- ============================================================================
+
+print("[Nova Bypass] Hooking Player.Kick...")
+
+if hookmetamethod then
+    hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        local method = getnamecallmethod()
         
-        for _, func in ipairs(getgc(true)) do
-            if typeof(func) == "function" and islclosure(func) then
-                local ok, consts = pcall(debug.getconstants, func)
-                if ok and consts and #consts <= 2 then
-                    for i, c in ipairs(consts) do
-                        if tostring(c):lower():find("script") == nil and tostring(c):lower():find("rbx") == nil then
-                            local src = debug.info(func, "s") or ""
-                            if src:find("Anti") or src:lower():find("core") then
-                                hookfunction(func, newcclosure(function(...)
-                                    warn("[Nova Bypass] Blocked Adonis crash function")
-                                    return
-                                end))
-                                patched = patched + 1
-                            end
-                        end
-                    end
+        if method == "Kick" and self == LocalPlayer then
+            warn("[Nova Bypass] Blocked Player:Kick()")
+            return
+        end
+        
+        return old_namecall(self, ...)
+    end))
+end
+
+-- Also hook the Kick function directly
+if LocalPlayer and LocalPlayer.Kick and hookfunction then
+    hookfunction(LocalPlayer.Kick, newcclosure(function(...)
+        warn("[Nova Bypass] Blocked direct Kick()")
+        return
+    end))
+end
+
+-- ============================================================================
+-- STEP 4: PATCH CRASH FUNCTIONS
+-- ============================================================================
+
+print("[Nova Bypass] Patching crash functions...")
+
+task.spawn(function()
+    local patched = 0
+    for _, func in ipairs(getgc(true)) do
+        if typeof(func) == "function" and islclosure(func) then
+            local ok, info = pcall(debug.getinfo, func)
+            if ok and info and info.source then
+                local src = info.source:lower()
+                if src:find("adonis") or src:find("anti") or src:find("core") then
+                    pcall(function()
+                        hookfunction(func, newcclosure(function(...)
+                            return
+                        end))
+                        patched = patched + 1
+                    end)
                 end
             end
         end
-        warn("[Nova Bypass] Crash loop patch complete: " .. patched .. " functions patched")
-    end)
-    
-    -- Block Kill() functions
-    task.defer(function()
-        for _, v in getgc(true) do
-            if typeof(v) == "table" and rawget(v, "Kill") and typeof(v.Kill) == "function" then
-                hookfunction(v.Kill, newcclosure(function(...)
-                    warn("[Nova Bypass] Kill() blocked")
-                    return
-                end))
-            end
+    end
+    warn("[Nova Bypass] Patched " .. patched .. " functions")
+end)
+
+-- ============================================================================
+-- STEP 5: BLOCK REMOTESPY DETECTION
+-- ============================================================================
+
+print("[Nova Bypass] Blocking RemoteSpy detection...")
+
+if hookfunction and getrawmetatable then
+    local old_getrawmetatable = getrawmetatable
+    hookfunction(getrawmetatable, newcclosure(function(obj)
+        if not checkcaller() then
+            -- Return fake metatable to anti-cheat
+            return setmetatable({}, {
+                __index = function() return function() end end,
+                __newindex = function() end,
+                __namecall = function() end
+            })
         end
-    end)
-    
-    -- Hook debug.info to hide from Adonis detection
+        return old_getrawmetatable(obj)
+    end))
+end
+
+-- ============================================================================
+-- STEP 6: SPOOF GETNAMECALLMETHOD
+-- ============================================================================
+
+print("[Nova Bypass] Spoofing getnamecallmethod...")
+
+if hookfunction and getnamecallmethod then
+    local old_getnamecallmethod = getnamecallmethod
+    hookfunction(getnamecallmethod, newcclosure(function()
+        if not checkcaller() then
+            -- Return fake method to anti-cheat
+            return "FireServer"
+        end
+        return old_getnamecallmethod()
+    end))
+end
+
+-- ============================================================================
+-- STEP 7: HOOK DEBUG.INFO
+-- ============================================================================
+
+print("[Nova Bypass] Hooking debug.info...")
+
+if hookfunction and debug.info then
     local old_debug_info = debug.info
     hookfunction(debug.info, newcclosure(function(func, what)
-        if typeof(func) == "function" and debug.info(func, "s") and debug.info(func, "s"):find("Core.Anti") then
-            if what == "n" then return "Detected" end
-            if what == "f" then return func end
-            if what == "s" then return debug.info(func, "s") end
-            if what == "l" then return debug.info(func, "l") end
-            if what == "a" then return debug.info(func, "a") end
+        if not checkcaller() then
+            -- Hide our hooks from debug.info
+            if typeof(func) == "function" then
+                local info = old_debug_info(func, what)
+                if what == "s" and type(info) == "string" and info:find("Nova") then
+                    return "=[C]"
+                end
+                return info
+            end
         end
         return old_debug_info(func, what)
     end))
-    
-    setthreadidentity(old_identity) -- Restore original identity
-    
-    print("[Nova Bypass] Adonis communication bypass loaded!")
 end
 
 -- ============================================================================
--- ADVANCED NAMECALL PROTECTION (Must run BEFORE any hooks)
+-- FINAL STEP: CONTINUOUS PROTECTION
 -- ============================================================================
 
-local function protectNamecallHook()
-    -- Store original functions before any hooks
-    local mt = getrawmetatable(game)
-    local oldNamecall = mt.__namecall
-    local oldIndex = mt.__index
-    
-    setreadonly(mt, false)
-    
-    -- Create a whitelist of allowed callers
-    local allowedScripts = {}
-    
-    -- Hook __namecall to block detection
-    mt.__namecall = newcclosure(function(self, ...)
-        local method = getnamecallmethod()
-        local args = {...}
-        
-        -- If our script is calling, allow it
-        if checkcaller() then
-            return oldNamecall(self, ...)
-        end
-        
-        -- Block any remote that tries to detect namecall hooks
-        if method == "FireServer" or method == "InvokeServer" then
-            local remoteName = tostring(self):lower()
-            
-            -- Block detection remotes
-            if remoteName:find("detect") or 
-               remoteName:find("anticheat") or
-               remoteName:find("ac") or
-               remoteName:find("security") or
-               remoteName:find("log") or
-               remoteName:find("report") or
-               remoteName:find("kick") or
-               remoteName:find("ban") then
-                
-                -- Check if arguments contain detection keywords
-                for i, arg in ipairs(args) do
-                    if type(arg) == "string" then
-                        local argLower = arg:lower()
-                        if argLower:find("namecall") or
-                           argLower:find("hook") or
-                           argLower:find("metatable") or
-                           argLower:find("exploit") or
-                           argLower:find("cheat") or
-                           argLower:find("__namecall") or
-                           argLower:find("getnamecallmethod") then
-                            warn("[Nova Bypass] Blocked detection remote: " .. remoteName .. " with arg: " .. arg)
-                            return -- Block the remote call
-                        end
-                    end
-                end
-            end
-        end
-        
-        return oldNamecall(self, ...)
-    end)
-    
-    setreadonly(mt, true)
-    
-    print("[Nova Bypass] Namecall protection loaded!")
-end
+print("[Nova Bypass] Starting continuous protection...")
 
--- ============================================================================
--- SPOOF GETNAMECALLMETHOD
--- ============================================================================
-
-local function spoofGetNamecallMethod()
-    -- Make getnamecallmethod return false positives to anti-cheat
-    if hookfunction and getnamecallmethod then
-        local oldGetNamecallMethod = getnamecallmethod
+task.spawn(function()
+    while task.wait(0.5) do
+        -- Continuously block any new Adonis scripts
+        pcall(destroyAdonis)
         
-        hookfunction(getnamecallmethod, newcclosure(function()
-            -- If our script calls it, return real method
-            if checkcaller() then
-                return oldGetNamecallMethod()
-            end
-            
-            -- If anti-cheat calls it, return a fake method
-            -- This makes the anti-cheat think no hook exists
-            return "FireServer" -- Return a safe default
-        end))
-        
-        print("[Nova Bypass] getnamecallmethod spoofed!")
-    end
-end
-
--- ============================================================================
--- BLOCK NAMECALL INSTANCE DETECTOR
--- ============================================================================
-
-local function blockNamecallInstanceDetector()
-    -- This specifically blocks the "namecallinstance detector" kick
-    local mt = getrawmetatable(game)
-    setreadonly(mt, false)
-    
-    local oldNamecall = mt.__namecall
-    
-    mt.__namecall = newcclosure(function(self, ...)
-        local method = getnamecallmethod()
-        local args = {...}
-        
-        if not checkcaller() then
-            -- Block the specific namecallinstance detector
-            if method == "FireServer" or method == "InvokeServer" then
-                -- Check for namecallinstance detection
-                if type(args[1]) == "string" and args[1]:lower():find("namecallinstance") then
-                    warn("[Nova Bypass] Blocked namecallinstance detector!")
-                    return
-                end
-                
-                -- Check if remote name suggests it's a detector
-                local remoteName = tostring(self)
-                if remoteName:find("MainEvent") or 
-                   remoteName:find("Detected") or
-                   remoteName:find("CHECKER") or
-                   remoteName:find("AC") then
-                    
-                    -- Scan all arguments for detection keywords
-                    for _, arg in ipairs(args) do
-                        if type(arg) == "string" then
-                            local lower = arg:lower()
-                            if lower:find("namecallinstance") or
-                               lower:find("namecall") or
-                               lower:find("instance") then
-                                warn("[Nova Bypass] Blocked namecallinstance detector via: " .. remoteName)
-                                return
-                            end
-                        elseif type(arg) == "table" then
-                            -- Check table for detection data
-                            for k, v in pairs(arg) do
-                                if type(v) == "string" and v:lower():find("namecall") then
-                                    warn("[Nova Bypass] Blocked namecallinstance detector (table arg)")
-                                    return
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        
-        return oldNamecall(self, ...)
-    end)
-    
-    setreadonly(mt, true)
-    
-    print("[Nova Bypass] Namecallinstance detector blocked!")
-end
-
--- ============================================================================
--- ADONIS ANTI-CHEAT BYPASS
--- ============================================================================
-
-local function bypassAdonis()
-    -- Find and disable Adonis client
-    for _, v in pairs(game:GetDescendants()) do
-        if v:IsA("LocalScript") and (v.Name:lower():find("adonis") or v.Name:lower():find("anti") or v.Name:lower():find("ac")) then
+        -- Re-hook Player.Kick if it gets unhooked
+        if LocalPlayer and LocalPlayer.Kick then
             pcall(function()
-                v.Disabled = true
-                v:Destroy()
+                if hookfunction then
+                    hookfunction(LocalPlayer.Kick, newcclosure(function(...)
+                        return
+                    end))
+                end
             end)
         end
     end
-    
-    print("[Nova Bypass] Adonis bypass loaded!")
-end
+end)
 
--- ============================================================================
--- REMOTE SPY PROTECTION
--- ============================================================================
+print("[Nova Bypass] ✓✓✓ ULTRA BYPASS LOADED ✓✓✓")
+print("[Nova Bypass] All protections active!")
+print("[Nova Bypass] Adonis = DESTROYED")
 
-local function protectRemotes()
-    -- Prevent remote spy from detecting our modifications
-    local mt = getrawmetatable(game)
-    setreadonly(mt, false)
-    
-    -- Make our hooks invisible to remote spies
-    if hookfunction and getrawmetatable then
-        local oldGetMetatable = getrawmetatable
-        
-        hookfunction(getrawmetatable, newcclosure(function(obj)
-            if not checkcaller() then
-                -- Return a clean metatable to anti-cheats
-                return {
-                    __index = function() end,
-                    __newindex = function() end,
-                    __namecall = function() end
-                }
-            end
-            return oldGetMetatable(obj)
-        end))
-    end
-    
-    setreadonly(mt, true)
-    
-    print("[Nova Bypass] Remote spy protection loaded!")
-end
-
--- ============================================================================
--- ANTI-KICK PROTECTION
--- ============================================================================
-
-local function protectFromKick()
-    -- Hook LocalPlayer.Kick to prevent kicks
-    if hookmetamethod then
-        local oldKick
-        oldKick = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-            
-            if method == "Kick" and self == LocalPlayer then
-                warn("[Nova Bypass] Blocked kick attempt!")
-                return
-            end
-            
-            return oldKick(self, ...)
-        end))
-    end
-    
-    -- Also protect against direct Kick function
-    if hookfunction and LocalPlayer and LocalPlayer.Kick then
-        hookfunction(LocalPlayer.Kick, newcclosure(function(...)
-            warn("[Nova Bypass] Blocked direct kick!")
-            return
-        end))
-    end
-    
-    print("[Nova Bypass] Anti-kick protection loaded!")
-end
-
--- ============================================================================
--- INITIALIZE ALL BYPASSES (ULTRA AGGRESSIVE ORDER!)
--- ============================================================================
-
-local function initializeBypass()
-    local success, err = pcall(function()
-        -- STEP 1: Disable Adonis IMMEDIATELY
-        disableAdonisBeforeLoad()
-        task.wait(0.2)
-        
-        -- STEP 2: Block ALL kick remotes
-        blockAllKickRemotes()
-        task.wait(0.2)
-        
-        -- STEP 3: Load Adonis communication bypass
-        bypassAdonisCommunication()
-        task.wait(0.3)
-        
-        -- STEP 4: Load namecall protection
-        blockNamecallInstanceDetector()
-        task.wait(0.2)
-        
-        protectNamecallHook()
-        task.wait(0.2)
-        
-        spoofGetNamecallMethod()
-        task.wait(0.2)
-        
-        protectFromKick()
-        task.wait(0.2)
-        
-        bypassAdonis()
-        task.wait(0.2)
-        
-        protectRemotes()
-        task.wait(0.2)
-        
-        print("[Nova Bypass] ✓ ULTRA BYPASS LOADED!")
-        print("[Nova Bypass] Protected against:")
-        print("  - Adonis Scripts (DESTROYED)")
-        print("  - ALL Kick Remotes (BLOCKED)")
-        print("  - Adonis Communication Detection")
-        print("  - Namecallinstance Detector")
-        print("  - Namecall Detection")
-        print("  - Remote Spy")
-        print("  - Crash Loops")
-    end)
-    
-    if not success then
-        warn("[Nova Bypass] Error loading bypass: " .. tostring(err))
-    end
-end
-
--- Start bypass
-initializeBypass()
-
--- Return success flag
+-- Return success
 return true
