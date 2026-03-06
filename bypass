@@ -2,11 +2,98 @@
 -- Bypasses Adonis Anti-Cheat and Namecall Detection
 print("[Nova Bypass] Loading bypass...")
 
--- Wait for game to be ready
+-- Wait for game to be fully loaded
+if game and not game:IsLoaded() then
+    repeat wait() until game:IsLoaded()
+end
+
 task.wait(2)
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
+
+-- ============================================================================
+-- ADONIS COMMUNICATION BYPASS (Prevents "Communication following disconnect")
+-- ============================================================================
+
+local function bypassAdonisCommunication()
+    local old_identity = getthreadidentity()
+    setthreadidentity(2) -- Prevents "Adonis_0x16471" kick
+    
+    local mt = getrawmetatable(game)
+    setreadonly(mt, false)
+    
+    local oldNewIndex = mt.__newindex
+    
+    mt.__newindex = newcclosure(function(t, k, v)
+        if typeof(t) == "Instance" then
+            local className = t.ClassName or "Unknown"
+            if k == "Parent" or k == "Name" then
+                -- Block Adonis from modifying Parent/Name
+                return
+            end
+        end
+        return oldNewIndex(t, k, v)
+    end)
+    
+    setreadonly(mt, true)
+    print("[Nova Bypass] __newindex hook installed (Adonis communication blocked)")
+    
+    -- Patch crash loops
+    task.spawn(function()
+        local patched = 0
+        
+        for _, func in ipairs(getgc(true)) do
+            if typeof(func) == "function" and islclosure(func) then
+                local ok, consts = pcall(debug.getconstants, func)
+                if ok and consts and #consts <= 2 then
+                    for i, c in ipairs(consts) do
+                        if tostring(c):lower():find("script") == nil and tostring(c):lower():find("rbx") == nil then
+                            local src = debug.info(func, "s") or ""
+                            if src:find("Anti") or src:lower():find("core") then
+                                hookfunction(func, newcclosure(function(...)
+                                    warn("[Nova Bypass] Blocked Adonis crash function")
+                                    return
+                                end))
+                                patched = patched + 1
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        warn("[Nova Bypass] Crash loop patch complete: " .. patched .. " functions patched")
+    end)
+    
+    -- Block Kill() functions
+    task.defer(function()
+        for _, v in getgc(true) do
+            if typeof(v) == "table" and rawget(v, "Kill") and typeof(v.Kill) == "function" then
+                hookfunction(v.Kill, newcclosure(function(...)
+                    warn("[Nova Bypass] Kill() blocked")
+                    return
+                end))
+            end
+        end
+    end)
+    
+    -- Hook debug.info to hide from Adonis detection
+    local old_debug_info = debug.info
+    hookfunction(debug.info, newcclosure(function(func, what)
+        if typeof(func) == "function" and debug.info(func, "s") and debug.info(func, "s"):find("Core.Anti") then
+            if what == "n" then return "Detected" end
+            if what == "f" then return func end
+            if what == "s" then return debug.info(func, "s") end
+            if what == "l" then return debug.info(func, "l") end
+            if what == "a" then return debug.info(func, "a") end
+        end
+        return old_debug_info(func, what)
+    end))
+    
+    setthreadidentity(old_identity) -- Restore original identity
+    
+    print("[Nova Bypass] Adonis communication bypass loaded!")
+end
 
 -- ============================================================================
 -- ADVANCED NAMECALL PROTECTION (Must run BEFORE any hooks)
@@ -247,7 +334,11 @@ end
 
 local function initializeBypass()
     local success, err = pcall(function()
-        -- CRITICAL: Load namecall protection FIRST before any other hooks
+        -- CRITICAL: Load Adonis communication bypass FIRST
+        bypassAdonisCommunication()
+        task.wait(0.5)
+        
+        -- Then load namecall protection
         blockNamecallInstanceDetector()
         task.wait(0.3)
         
@@ -268,11 +359,13 @@ local function initializeBypass()
         
         print("[Nova Bypass] ✓ All bypasses loaded successfully!")
         print("[Nova Bypass] Protected against:")
+        print("  - Adonis Communication Detection")
         print("  - Namecallinstance Detector")
         print("  - Adonis Anti-Cheat")
         print("  - Namecall Detection")
         print("  - Remote Spy")
         print("  - Kick/Ban")
+        print("  - Crash Loops")
     end)
     
     if not success then
