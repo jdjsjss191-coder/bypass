@@ -48,6 +48,12 @@ def check_key():
     if key not in all_keys:
         return jsonify({"valid": False, "reason": "Invalid key"}), 200
 
+    # check expiry on permanent keys
+    key_expiry = data.get("key_expiry", {})
+    if key in key_expiry and key_expiry[key] is not None:
+        if int(time.time()) > key_expiry[key]:
+            return jsonify({"valid": False, "reason": "Key expired"}), 200
+
     # check blacklist
     for uid, keys in data.get("keys", {}).items():
         if key in keys and uid in data.get("blacklist", {}):
