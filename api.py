@@ -5,6 +5,10 @@ app = Flask(__name__)
 DATA_FILE = "data.json"
 API_SECRET = os.environ.get("API_SECRET", "vanta_secret")
 
+@app.route("/")
+def health():
+    return "OK", 200
+
 def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
@@ -15,11 +19,15 @@ def save_data(data):
     with open(DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-@app.route("/check", methods=["POST"])
+@app.route("/check", methods=["GET", "POST"])
 def check_key():
-    body = request.get_json(force=True)
-    key  = body.get("key", "").strip()
-    hwid = body.get("hwid", "").strip()
+    if request.method == "GET":
+        key  = request.args.get("key", "").strip()
+        hwid = request.args.get("hwid", "").strip()
+    else:
+        body = request.get_json(force=True) or {}
+        key  = body.get("key", "").strip()
+        hwid = body.get("hwid", "").strip()
 
     if not key or not hwid:
         return jsonify({"valid": False, "reason": "Missing key or hwid"}), 400
