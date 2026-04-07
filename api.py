@@ -66,8 +66,8 @@ def check_key():
         return jsonify({"valid": True, "reason": "OK"}), 200
 
 def run_api():
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 def start_api_thread():
     t = threading.Thread(target=run_api, daemon=True)
