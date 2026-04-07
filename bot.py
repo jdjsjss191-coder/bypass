@@ -5,6 +5,7 @@ import string
 import os
 import json
 import time
+from api import start_api_thread
 
 TOKEN = os.environ["TOKEN"]
 ANNOUNCE_CHANNEL_ID = int(os.environ.get("ANNOUNCE_CHANNEL", "0"))
@@ -197,8 +198,24 @@ async def dmall(interaction: discord.Interaction, message: str):
             failed += 1
     await interaction.followup.send(f"DM sent to {sent} members. {failed} couldn't be reached.", ephemeral=True)
 
+@tree.command(name="resethwid", description="Reset the HWID binding for a key")
+@app_commands.describe(key="The key to reset HWID for")
+async def resethwid(interaction: discord.Interaction, key: str):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    data = load_data()
+    key_hwid = data.get("key_hwid", {})
+    if key not in key_hwid:
+        await interaction.response.send_message(f"No HWID bound to that key.", ephemeral=True)
+        return
+    del key_hwid[key]
+    data["key_hwid"] = key_hwid
+    save_data(data)
+    await interaction.response.send_message(f"HWID reset for `{key}`. Next use will bind a new HWID.", ephemeral=True)
+
 @client.event
 async def on_ready():
+    start_api_thread()
     await tree.sync()
     print(f"Logged in as {client.user}")
 
