@@ -38,34 +38,80 @@ intents.members = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
+def parse_duration(duration: str) -> int | None:
+    """Parse duration string like '1h', '7d', '2w', '1m', 'lifetime' into seconds. Returns None for lifetime."""
+    duration = duration.strip().lower()
+    if duration in ("lifetime", "life", "perm", "permanent"):
+        return None
+    units = {"h": 3600, "d": 86400, "w": 604800, "m": 2592000}
+    for suffix, mult in units.items():
+        if duration.endswith(suffix):
+            try:
+                return int(duration[:-1]) * mult
+            except ValueError:
+                return 0
+    return 0
+
+def duration_label(seconds: int | None) -> str:
+    if seconds is None:
+        return "Lifetime"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        return f"{seconds // 3600}h"
+    if seconds < 604800:
+        return f"{seconds // 86400}d"
+    if seconds < 2592000:
+        return f"{seconds // 604800}w"
+    return f"{seconds // 2592000} month(s)"
+
 @tree.command(name="genv2key", description="Generate a Vanta V2 key for yourself")
-async def genv2key(interaction: discord.Interaction):
+@app_commands.describe(duration="Duration: e.g. 1h, 7d, 2w, 1m, lifetime")
+async def genv2key(interaction: discord.Interaction, duration: str = "lifetime"):
     if not has_owner_role(interaction):
         return await deny(interaction)
+    secs = parse_duration(duration)
+    if secs == 0:
+        await interaction.response.send_message("❌ Invalid duration. Use e.g. `1h`, `7d`, `2w`, `1m`, `lifetime`.", ephemeral=True)
+        return
     key = gen_key()
     data = load_data()
     uid = str(interaction.user.id)
+    expiry = int(time.time()) + secs if secs else None
+    data.setdefault("key_expiry", {})[key] = expiry
     data["keys"].setdefault(uid, []).append(key)
     save_data(data)
     embed = discord.Embed(title="Vanta V2 Key", description=f"```{key}```", color=0x5080FF)
+    embed.add_field(name="Duration", value=duration_label(secs), inline=True)
+    if expiry:
+        embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=True)
     embed.set_footer(text="Vanta.cc")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @tree.command(name="genv2keyto", description="Generate a Vanta V2 key and DM it to a user")
-@app_commands.describe(user="The user to send the key to")
-async def genv2keyto(interaction: discord.Interaction, user: discord.Member):
+@app_commands.describe(user="The user to send the key to", duration="Duration: e.g. 1h, 7d, 2w, 1m, lifetime")
+async def genv2keyto(interaction: discord.Interaction, user: discord.Member, duration: str = "lifetime"):
     if not has_owner_role(interaction):
         return await deny(interaction)
+    secs = parse_duration(duration)
+    if secs == 0:
+        await interaction.response.send_message("❌ Invalid duration. Use e.g. `1h`, `7d`, `2w`, `1m`, `lifetime`.", ephemeral=True)
+        return
     key = gen_key()
     data = load_data()
     uid = str(user.id)
+    expiry = int(time.time()) + secs if secs else None
+    data.setdefault("key_expiry", {})[key] = expiry
     data["keys"].setdefault(uid, []).append(key)
     save_data(data)
     embed = discord.Embed(title="Vanta V2 Key", description=f"```{key}```", color=0x5080FF)
+    embed.add_field(name="Duration", value=duration_label(secs), inline=True)
+    if expiry:
+        embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=True)
     embed.set_footer(text="Vanta.cc")
     try:
         await user.send(embed=embed)
-        await interaction.response.send_message(f"Key sent to {user.mention} via DM.", ephemeral=True)
+        await interaction.response.send_message(f"Key sent to {user.mention} via DM. Duration: {duration_label(secs)}", ephemeral=True)
     except discord.Forbidden:
         await interaction.response.send_message(f"Couldn't DM {user.mention} — they may have DMs disabled.", ephemeral=True)
 
