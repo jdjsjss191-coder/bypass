@@ -33,6 +33,10 @@ def gen_key():
     chars = string.ascii_letters + string.digits
     return "Vyron-" + "".join(random.choices(chars, k=15))
 
+def gen_ext_key():
+    chars = string.ascii_letters + string.digits
+    return "VyronExt-" + "".join(random.choices(chars, k=15))
+
 def has_owner_role(interaction: discord.Interaction) -> bool:
     return any(r.name == OWNER_ROLE_NAME for r in interaction.user.roles)
 
@@ -2075,6 +2079,227 @@ async def transferkey(interaction: discord.Interaction, key: str, new_user: disc
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+# ─────────────────────────────────────────────
+#  EXTERNAL KEY COMMANDS
+# ─────────────────────────────────────────────
+
+@tree.command(name="genextkey", description="Generate a Vyron External key for yourself")
+@app_commands.describe(duration="Duration: e.g. 1h, 7d, 2w, 1m, lifetime")
+async def genextkey(interaction: discord.Interaction, duration: str = "lifetime"):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    secs = parse_duration(duration)
+    if secs == 0:
+        await interaction.response.send_message("❌ Invalid duration.", ephemeral=True)
+        return
+    key = gen_ext_key()
+    data = load_data()
+    uid = str(interaction.user.id)
+    expiry = int(time.time()) + secs if secs else None
+    data.setdefault("key_expiry", {})[key] = expiry
+    data.setdefault("key_created", {})[key] = int(time.time())
+    data["keys"].setdefault(uid, []).append(key)
+    save_data(data)
+    embed = discord.Embed(title="🖥️ Vyron External Key", description=f"```{key}```", color=0x00AAFF)
+    embed.add_field(name="Duration", value=duration_label(secs), inline=True)
+    if expiry:
+        embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=True)
+    embed.set_footer(text="Vyron.cc • External")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@tree.command(name="genextkeyto", description="Generate a Vyron External key and DM it to a user")
+@app_commands.describe(user="The user to send the key to", duration="Duration: e.g. 1h, 7d, 2w, 1m, lifetime")
+async def genextkeyto(interaction: discord.Interaction, user: discord.Member, duration: str = "lifetime"):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    secs = parse_duration(duration)
+    if secs == 0:
+        await interaction.response.send_message("❌ Invalid duration.", ephemeral=True)
+        return
+    key = gen_ext_key()
+    data = load_data()
+    uid = str(user.id)
+    expiry = int(time.time()) + secs if secs else None
+    data.setdefault("key_expiry", {})[key] = expiry
+    data.setdefault("key_created", {})[key] = int(time.time())
+    data["keys"].setdefault(uid, []).append(key)
+    save_data(data)
+    dm_embed = discord.Embed(title="🖥️ Vyron External Key", description=f"```{key}```", color=0x00AAFF)
+    dm_embed.add_field(name="Duration", value=duration_label(secs), inline=True)
+    if expiry:
+        dm_embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=True)
+    dm_embed.set_footer(text="Vyron.cc • External")
+    pub_embed = discord.Embed(
+        title="🖥️ External Key Sent",
+        description=f"{interaction.user.mention} sent a Vyron External key to {user.mention}.",
+        color=0x00AAFF
+    )
+    pub_embed.add_field(name="Duration", value=duration_label(secs), inline=True)
+    pub_embed.set_footer(text="Vyron.cc • External")
+    try:
+        await user.send(embed=dm_embed)
+        await interaction.response.send_message(embed=pub_embed)
+    except discord.Forbidden:
+        await interaction.response.send_message(f"Couldn't DM {user.mention} — they may have DMs disabled.")
+
+
+@tree.command(name="addexternalpanel", description="Post the Vyron External key panel in this channel")
+async def addexternalpanel(interaction: discord.Interaction):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    embed = discord.Embed(
+        title="🖥️ Vyron External Panel",
+        description=(
+            "If you have a Vyron External key, use the buttons below to manage it.\n\n"
+            "Your key is bound to your **HWID** on first use.\n"
+            "Use **Reset HWID** if you changed your PC (24h cooldown)."
+        ),
+        color=0x00AAFF
+    )
+    embed.set_footer(text=f"Sent by {interaction.user} • Vyron.cc External")
+
+    view = ExternalPanelView()
+    await interaction.channel.send(embed=embed, view=view)
+    await interaction.response.send_message("✅ External panel posted.", ephemeral=True)
+
+
+class ExternalPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🔑 Redeem Key", style=discord.ButtonStyle.success, custom_id="ext_panel_redeem")
+    async def redeem_key(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(ExternalRedeemModal())
+
+    @discord.ui.button(label="⚙️ Reset HWID", style=discord.ButtonStyle.secondary, custom_id="ext_panel_resethwid")
+    async def reset_hwid(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = load_data()
+        uid = str(interaction.user.id)
+        now = int(time.time())
+
+        redeemed = data.get("ext_redeemed_keys", {}).get(uid)
+        if not redeemed:
+            await interaction.response.send_message("❌ You haven't redeemed an external key yet.", ephemeral=True)
+            return
+
+        key = redeemed["key"]
+        cooldowns = data.setdefault("hwid_reset_cooldown", {})
+        last_reset = cooldowns.get(uid + "_ext", 0)
+        if now - last_reset < 86400:
+            next_reset = last_reset + 86400
+            await interaction.response.send_message(
+                f"❌ HWID reset available <t:{next_reset}:R>.", ephemeral=True)
+            return
+
+        key_hwid = data.setdefault("key_hwid", {})
+        key_hwid.pop(key, None)
+        cooldowns[uid + "_ext"] = now
+        save_data(data)
+        await interaction.response.send_message(
+            "✅ HWID reset. Next launch will bind to your new machine.", ephemeral=True)
+
+    @discord.ui.button(label="📊 Key Info", style=discord.ButtonStyle.primary, custom_id="ext_panel_info")
+    async def key_info(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = load_data()
+        uid = str(interaction.user.id)
+        now = int(time.time())
+
+        redeemed = data.get("ext_redeemed_keys", {}).get(uid)
+        if not redeemed:
+            await interaction.response.send_message("❌ You haven't redeemed an external key yet.", ephemeral=True)
+            return
+
+        key = redeemed["key"]
+        expiry = data.get("key_expiry", {}).get(key)
+        hwid = data.get("key_hwid", {}).get(key, "Not bound yet")
+        redeemed_at = redeemed.get("redeemed_at")
+
+        if expiry is None:
+            expiry_str = "Lifetime"
+            status = "✅ Active"
+        elif now > expiry:
+            expiry_str = f"<t:{expiry}:R>"
+            status = "❌ Expired"
+        else:
+            expiry_str = f"<t:{expiry}:R>"
+            status = "✅ Active"
+
+        last_reset = data.get("hwid_reset_cooldown", {}).get(uid + "_ext", 0)
+        hwid_reset_str = f"<t:{last_reset + 86400}:R>" if last_reset and now - last_reset < 86400 else "Available now"
+
+        embed = discord.Embed(title="🖥️ External Key Info", color=0x00AAFF)
+        embed.add_field(name="Key", value=f"```{key}```", inline=False)
+        embed.add_field(name="Status", value=status, inline=True)
+        embed.add_field(name="Expires", value=expiry_str, inline=True)
+        embed.add_field(name="Redeemed", value=f"<t:{redeemed_at}:R>" if redeemed_at else "Unknown", inline=True)
+        embed.add_field(name="HWID Bound", value="Yes" if hwid != "Not bound yet" else "No", inline=True)
+        embed.add_field(name="Next HWID Reset", value=hwid_reset_str, inline=True)
+        embed.set_footer(text="Vyron.cc • External")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+class ExternalRedeemModal(discord.ui.Modal, title="Redeem External Key"):
+    key_input = discord.ui.TextInput(
+        label="Enter your external key",
+        placeholder="VyronExt-XXXXXXXXXXXXXXX",
+        min_length=4,
+        max_length=64,
+        required=True
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        key = self.key_input.value.strip()
+        data = load_data()
+        uid = str(interaction.user.id)
+        now = int(time.time())
+
+        if not key.startswith("VyronExt-"):
+            await interaction.response.send_message(
+                "❌ That doesn't look like an external key. External keys start with `VyronExt-`.",
+                ephemeral=True)
+            return
+
+        all_perm_keys = set()
+        for keys in data.get("keys", {}).values():
+            all_perm_keys.update(keys)
+
+        if key not in all_perm_keys:
+            await interaction.response.send_message("❌ Invalid key.", ephemeral=True)
+            return
+
+        expiry = data.get("key_expiry", {}).get(key)
+        if expiry is not None and now > expiry:
+            await interaction.response.send_message("❌ That key has expired.", ephemeral=True)
+            return
+
+        ext_redeemed = data.setdefault("ext_redeemed_keys", {})
+        for existing_uid, r in ext_redeemed.items():
+            if r["key"] == key and existing_uid != uid:
+                await interaction.response.send_message(
+                    "❌ That key has already been redeemed by another user.", ephemeral=True)
+                return
+
+        if uid in data.get("blacklist", {}):
+            await interaction.response.send_message("❌ You are blacklisted.", ephemeral=True)
+            return
+
+        ext_redeemed[uid] = {"key": key, "redeemed_at": now}
+        save_data(data)
+
+        expiry_str = f"<t:{expiry}:R>" if expiry else "Lifetime"
+        embed = discord.Embed(
+            title="✅ External Key Redeemed!",
+            description="Your key is ready. Launch the external and enter it when prompted.",
+            color=0x00CC66
+        )
+        embed.add_field(name="Key", value=f"```{key}```", inline=False)
+        embed.add_field(name="Expires", value=expiry_str, inline=True)
+        embed.set_footer(text="Vyron.cc • External")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 @client.event
 async def on_ready():
     start_api_thread()
@@ -2082,6 +2307,7 @@ async def on_ready():
     client.add_view(KeyPanelView())
     client.add_view(TicketSelectView())
     client.add_view(CloseTicketView())
+    client.add_view(ExternalPanelView())
     # Start background expiry check loop
     asyncio.create_task(expiry_check_loop())
     await tree.sync()
