@@ -5,6 +5,8 @@ import string
 import os
 import json
 import time
+import asyncio
+from typing import Optional
 from api import start_api_thread
 
 TOKEN = os.environ["TOKEN"]
@@ -12,6 +14,10 @@ ANNOUNCE_CHANNEL_ID = int(os.environ.get("ANNOUNCE_CHANNEL", "0"))
 OWNER_ROLE_NAME = os.environ.get("OWNER_ROLE", "Owner")
 
 DATA_FILE = "data.json"
+
+# In-memory giveaway stores: message_id -> giveaway dict
+active_giveaways: dict[int, dict] = {}
+ended_giveaways: dict[int, dict] = {}
 
 def load_data():
     if os.path.exists(DATA_FILE):
@@ -64,6 +70,284 @@ def duration_label(seconds: int | None) -> str:
     if seconds < 2592000:
         return f"{seconds // 604800}w"
     return f"{seconds // 2592000} month(s)"
+
+# ─────────────────────────────────────────────
+#  GIVEAWAY HELPERS
+# ─────────────────────────────────────────────
+
+def build_giveaway_embed(prize: str, host: discord.Member, end_time: int, entries: list[int], ended: bool = False) -> discord.Embed:
+    color = 0xAA00FF if not ended else 0x555555
+    title = "🎉 GIVEAWAY 🎉" if not ended else "🎉 GIVEAWAY ENDED 🎉"
+    embed = discord.Embed(title=title, description=f"**Prize:** {prize}", color=color)
+    embed.add_field(name="Hosted by", value=host.mention, inline=True)
+    embed.add_field(name="Entries", value=str(len(entries)), inline=True)
+    if not ended:
+        embed.add_field(name="Ends", value=f"<t:{end_time}:R>", inline=True)
+        embed.set_footer(text="Click ✅ Join or ❌ Leave to manage your entry • Vanta.cc")
+    else:
+        embed.set_footer(text="Giveaway ended • Vanta.cc")
+    return embed
+
+async def end_giveaway(message_id: int):
+    """Pick a winner and announce it."""
+    giveaway = active_giveaways.get(message_id)
+    if not giveaway or giveaway.get("ended"):
+        return
+
+    giveaway["ended"] = True
+
+    channel = client.get_channel(giveaway["channel_id"])
+    if not channel:
+        return
+
+    try:
+        message = await channel.fetch_message(message_id)
+    except discord.NotFound:
+        return
+
+    entries = giveaway["entries"]
+    prize = giveaway["prize"]
+    host_id = giveaway["host_id"]
+    end_time = giveaway["end_time"]
+
+    # Save to ended store for rerolls
+    ended_giveaways[message_id] = {
+        "entries": list(entries),
+        "prize": prize,
+    }
+
+    # Resolve host member
+    host = channel.guild.get_member(host_id)
+    host_mention = host.mention if host else f"<@{host_id}>"
+
+    # Build ended embed
+    ended_embed = build_giveaway_embed(
+        prize,
+        host or discord.Object(id=host_id),
+        end_time,
+        entries,
+        ended=True
+    )
+
+    if not entries:
+        ended_embed.add_field(name="Winner", value="No one entered 😢", inline=False)
+        await message.edit(embed=ended_embed, view=None)
+        await channel.send(f"🎉 The giveaway for **{prize}** has ended but nobody entered!")
+    else:
+        winner_id = random.choice(entries)
+        winner = channel.guild.get_member(winner_id)
+        winner_mention = winner.mention if winner else f"<@{winner_id}>"
+        ended_embed.add_field(name="Winner", value=winner_mention, inline=False)
+        await message.edit(embed=ended_embed, view=None)
+        await channel.send(
+            f"🎉 Congratulations {winner_mention}! You won **{prize}**!\n"
+            f"Hosted by {host_mention}."
+        )
+
+    # Remove from active giveaways
+    active_giveaways.pop(message_id, None)
+
+
+class GiveawayView(discord.ui.View):
+    """Persistent view with Join / Leave buttons."""
+
+    def __init__(self, message_id: int):
+        # timeout=None so the view lives until the bot restarts
+        super().__init__(timeout=None)
+        self.message_id = message_id
+
+    @discord.ui.button(label="✅ Join", style=discord.ButtonStyle.success, custom_id="giveaway_join")
+    async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        giveaway = active_giveaways.get(self.message_id)
+        if not giveaway or giveaway.get("ended"):
+            await interaction.response.send_message("This giveaway has already ended.", ephemeral=True)
+            return
+
+        uid = interaction.user.id
+        if uid in giveaway["entries"]:
+            await interaction.response.send_message("You're already entered in this giveaway!", ephemeral=True)
+            return
+
+        giveaway["entries"].append(uid)
+
+        # Update embed entry count
+        host = interaction.guild.get_member(giveaway["host_id"])
+        embed = build_giveaway_embed(
+            giveaway["prize"],
+            host or discord.Object(id=giveaway["host_id"]),
+            giveaway["end_time"],
+            giveaway["entries"]
+        )
+        await interaction.response.edit_message(embed=embed, view=self)
+        # Confirm to user
+        await interaction.followup.send("✅ You've entered the giveaway! Good luck!", ephemeral=True)
+
+    @discord.ui.button(label="❌ Leave", style=discord.ButtonStyle.danger, custom_id="giveaway_leave")
+    async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
+        giveaway = active_giveaways.get(self.message_id)
+        if not giveaway or giveaway.get("ended"):
+            await interaction.response.send_message("This giveaway has already ended.", ephemeral=True)
+            return
+
+        uid = interaction.user.id
+        if uid not in giveaway["entries"]:
+            await interaction.response.send_message("You're not in this giveaway.", ephemeral=True)
+            return
+
+        giveaway["entries"].remove(uid)
+
+        host = interaction.guild.get_member(giveaway["host_id"])
+        embed = build_giveaway_embed(
+            giveaway["prize"],
+            host or discord.Object(id=giveaway["host_id"]),
+            giveaway["end_time"],
+            giveaway["entries"]
+        )
+        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.followup.send("❌ You've left the giveaway.", ephemeral=True)
+
+
+# ─────────────────────────────────────────────
+#  GIVEAWAY COMMANDS
+# ─────────────────────────────────────────────
+
+@tree.command(name="giveaway", description="Start a giveaway in this channel")
+@app_commands.describe(
+    duration="How long the giveaway runs: e.g. 1h, 30m, 7d",
+    prize="What you're giving away"
+)
+async def giveaway(interaction: discord.Interaction, duration: str, prize: str):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    secs = parse_duration(duration)
+    if not secs:
+        await interaction.response.send_message(
+            "❌ Invalid duration. Use e.g. `30m`, `1h`, `7d`. Lifetime is not valid for giveaways.",
+            ephemeral=True
+        )
+        return
+
+    end_time = int(time.time()) + secs
+
+    # Send the giveaway embed first so we get a message ID
+    await interaction.response.defer(ephemeral=True)
+
+    embed = build_giveaway_embed(prize, interaction.user, end_time, [])
+    # Placeholder view — we'll replace it once we have the message ID
+    placeholder_view = discord.ui.View(timeout=None)
+    msg = await interaction.channel.send(embed=embed, view=placeholder_view)
+
+    # Now build the real view tied to this message ID
+    view = GiveawayView(message_id=msg.id)
+    await msg.edit(view=view)
+
+    # Store giveaway state
+    active_giveaways[msg.id] = {
+        "channel_id": interaction.channel.id,
+        "host_id": interaction.user.id,
+        "prize": prize,
+        "end_time": end_time,
+        "entries": [],
+        "ended": False,
+    }
+
+    await interaction.followup.send(
+        f"✅ Giveaway started! It will end <t:{end_time}:R>.",
+        ephemeral=True
+    )
+
+    # Schedule the end
+    async def _wait_and_end():
+        await asyncio.sleep(secs)
+        await end_giveaway(msg.id)
+
+    asyncio.create_task(_wait_and_end())
+
+
+@tree.command(name="giveawayend", description="End a giveaway early and pick a winner now")
+@app_commands.describe(message_id="The message ID of the giveaway to end")
+async def giveawayend(interaction: discord.Interaction, message_id: str):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    try:
+        mid = int(message_id)
+    except ValueError:
+        await interaction.response.send_message("❌ Invalid message ID.", ephemeral=True)
+        return
+
+    if mid not in active_giveaways:
+        await interaction.response.send_message("❌ No active giveaway found with that message ID.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    await end_giveaway(mid)
+    await interaction.followup.send("✅ Giveaway ended and winner picked.", ephemeral=True)
+
+
+@tree.command(name="giveawayreroll", description="Reroll a winner for an ended giveaway")
+@app_commands.describe(message_id="The message ID of the ended giveaway")
+async def giveawayreroll(interaction: discord.Interaction, message_id: str):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    # We keep a separate ended store for rerolls
+    try:
+        mid = int(message_id)
+    except ValueError:
+        await interaction.response.send_message("❌ Invalid message ID.", ephemeral=True)
+        return
+
+    if mid not in ended_giveaways:
+        await interaction.response.send_message(
+            "❌ No ended giveaway found with that message ID. Reroll only works on recently ended giveaways.",
+            ephemeral=True
+        )
+        return
+
+    giveaway = ended_giveaways[mid]
+    entries = giveaway["entries"]
+    prize = giveaway["prize"]
+
+    if not entries:
+        await interaction.response.send_message("❌ No entries to reroll from.", ephemeral=True)
+        return
+
+    winner_id = random.choice(entries)
+    winner = interaction.guild.get_member(winner_id)
+    winner_mention = winner.mention if winner else f"<@{winner_id}>"
+
+    await interaction.response.send_message(
+        f"🎉 Reroll! The new winner of **{prize}** is {winner_mention}! Congratulations!"
+    )
+
+
+@tree.command(name="giveawaylist", description="List all active giveaways in this server")
+async def giveawaylist(interaction: discord.Interaction):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    if not active_giveaways:
+        await interaction.response.send_message("No active giveaways right now.", ephemeral=True)
+        return
+
+    embed = discord.Embed(title="Active Giveaways", color=0xAA00FF)
+    for mid, g in active_giveaways.items():
+        channel = client.get_channel(g["channel_id"])
+        ch_mention = channel.mention if channel else f"<#{g['channel_id']}>"
+        embed.add_field(
+            name=g["prize"],
+            value=f"Channel: {ch_mention}\nEntries: {len(g['entries'])}\nEnds: <t:{g['end_time']}:R>\nMessage ID: `{mid}`",
+            inline=False
+        )
+    embed.set_footer(text="Vanta.cc")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ─────────────────────────────────────────────
+#  EXISTING COMMANDS
+# ─────────────────────────────────────────────
 
 @tree.command(name="genv2key", description="Generate a Vanta V2 key for yourself")
 @app_commands.describe(duration="Duration: e.g. 1h, 7d, 2w, 1m, lifetime")
