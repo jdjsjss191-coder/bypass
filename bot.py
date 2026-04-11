@@ -1180,9 +1180,234 @@ async def customkey(interaction: discord.Interaction, user: discord.Member, key:
     await interaction.response.send_message(embed=pub_embed)
 
 
+# ─────────────────────────────────────────────
+#  KEY PANEL
+# ─────────────────────────────────────────────
+
+class KeyPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🔑 Redeem Key", style=discord.ButtonStyle.success, custom_id="panel_redeem")
+    async def redeem_key(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(RedeemKeyModal())
+
+    @discord.ui.button(label="📋 Get Script", style=discord.ButtonStyle.primary, custom_id="panel_getscript")
+    async def get_script(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = load_data()
+        uid = str(interaction.user.id)
+        now = int(time.time())
+
+        # Find a valid redeemed key for this user
+        redeemed = data.get("redeemed_keys", {}).get(uid)
+        if not redeemed:
+            await interaction.response.send_message("❌ You haven't redeemed a key yet. Click **Redeem Key** first.", ephemeral=True)
+            return
+
+        key = redeemed["key"]
+        # Check key is still valid
+        expiry = data.get("key_expiry", {}).get(key)
+        if expiry is not None and now > expiry:
+            await interaction.response.send_message("❌ Your key has expired. Please contact staff.", ephemeral=True)
+            return
+
+        # Check not blacklisted
+        if uid in data.get("blacklist", {}):
+            await interaction.response.send_message("❌ You are blacklisted.", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title="📋 Your Script Key",
+            description=f"Place this above your loader script:",
+            color=0x5080FF
+        )
+        embed.add_field(name="Key", value=f"```{key}```", inline=False)
+        if expiry:
+            embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=True)
+        else:
+            embed.add_field(name="Expires", value="Lifetime", inline=True)
+        embed.set_footer(text="Vyron.cc • Keep this key private")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="⚙️ Reset HWID", style=discord.ButtonStyle.secondary, custom_id="panel_resethwid")
+    async def reset_hwid(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = load_data()
+        uid = str(interaction.user.id)
+        now = int(time.time())
+
+        redeemed = data.get("redeemed_keys", {}).get(uid)
+        if not redeemed:
+            await interaction.response.send_message("❌ You haven't redeemed a key yet.", ephemeral=True)
+            return
+
+        key = redeemed["key"]
+
+        # 24hr cooldown check
+        cooldowns = data.setdefault("hwid_reset_cooldown", {})
+        last_reset = cooldowns.get(uid, 0)
+        cooldown_secs = 86400  # 24 hours
+        if now - last_reset < cooldown_secs:
+            next_reset = last_reset + cooldown_secs
+            await interaction.response.send_message(
+                f"❌ You can only reset your HWID once every 24 hours.\nNext reset available: <t:{next_reset}:R>",
+                ephemeral=True
+            )
+            return
+
+        # Do the reset
+        key_hwid = data.setdefault("key_hwid", {})
+        if key in key_hwid:
+            del key_hwid[key]
+        cooldowns[uid] = now
+        save_data(data)
+
+        await interaction.response.send_message(
+            "✅ Your HWID has been reset. The next time you use your key it will bind to your new device.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="📊 Get Stats", style=discord.ButtonStyle.secondary, custom_id="panel_stats")
+    async def get_stats(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = load_data()
+        uid = str(interaction.user.id)
+        now = int(time.time())
+
+        redeemed = data.get("redeemed_keys", {}).get(uid)
+        if not redeemed:
+            await interaction.response.send_message("❌ You haven't redeemed a key yet.", ephemeral=True)
+            return
+
+        key = redeemed["key"]
+        expiry = data.get("key_expiry", {}).get(key)
+        created = data.get("key_created", {}).get(key)
+        hwid = data.get("key_hwid", {}).get(key, "Not bound yet")
+        redeemed_at = redeemed.get("redeemed_at")
+
+        if expiry is None:
+            expiry_str = "Lifetime"
+            status = "✅ Active"
+        elif now > expiry:
+            expiry_str = f"<t:{expiry}:R>"
+            status = "❌ Expired"
+        else:
+            expiry_str = f"<t:{expiry}:R>"
+            status = "✅ Active"
+
+        # HWID reset cooldown
+        last_reset = data.get("hwid_reset_cooldown", {}).get(uid, 0)
+        if last_reset and now - last_reset < 86400:
+            next_reset = last_reset + 86400
+            hwid_reset_str = f"<t:{next_reset}:R>"
+        else:
+            hwid_reset_str = "Available now"
+
+        embed = discord.Embed(title="📊 Your Key Stats", color=0x5080FF)
+        embed.add_field(name="Key", value=f"```{key}```", inline=False)
+        embed.add_field(name="Status", value=status, inline=True)
+        embed.add_field(name="Expires", value=expiry_str, inline=True)
+        embed.add_field(name="Redeemed", value=f"<t:{redeemed_at}:R>" if redeemed_at else "Unknown", inline=True)
+        embed.add_field(name="HWID Bound", value="Yes" if hwid != "Not bound yet" else "No", inline=True)
+        embed.add_field(name="Next HWID Reset", value=hwid_reset_str, inline=True)
+        embed.set_footer(text="Vyron.cc")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+class RedeemKeyModal(discord.ui.Modal, title="Redeem Your Key"):
+    key_input = discord.ui.TextInput(
+        label="Enter your key",
+        placeholder="Vyron-XXXXXXXXXXXXXXX",
+        min_length=4,
+        max_length=64,
+        required=True
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        key = self.key_input.value.strip()
+        data = load_data()
+        uid = str(interaction.user.id)
+        now = int(time.time())
+
+        # Collect all valid permanent keys
+        all_perm_keys = set()
+        for keys in data.get("keys", {}).values():
+            all_perm_keys.update(keys)
+
+        # Collect valid temp keys
+        all_temp_keys = set()
+        for tkeys in data.get("temp_keys", {}).values():
+            for t in tkeys:
+                if t["expiry"] > now:
+                    all_temp_keys.add(t["key"])
+
+        all_valid = all_perm_keys | all_temp_keys
+
+        if key not in all_valid:
+            await interaction.response.send_message("❌ Invalid or expired key.", ephemeral=True)
+            return
+
+        # Check expiry
+        expiry = data.get("key_expiry", {}).get(key)
+        if expiry is not None and now > expiry:
+            await interaction.response.send_message("❌ That key has expired.", ephemeral=True)
+            return
+
+        # Check if key is already redeemed by someone else
+        redeemed_keys = data.setdefault("redeemed_keys", {})
+        for existing_uid, r in redeemed_keys.items():
+            if r["key"] == key and existing_uid != uid:
+                await interaction.response.send_message("❌ That key has already been redeemed by another user.", ephemeral=True)
+                return
+
+        # Check blacklist
+        if uid in data.get("blacklist", {}):
+            await interaction.response.send_message("❌ You are blacklisted.", ephemeral=True)
+            return
+
+        # Redeem it
+        redeemed_keys[uid] = {
+            "key": key,
+            "redeemed_at": now
+        }
+        save_data(data)
+
+        expiry_str = f"<t:{expiry}:R>" if expiry else "Lifetime"
+        embed = discord.Embed(
+            title="✅ Key Redeemed!",
+            description="Your key has been successfully redeemed. Click **Get Script** to retrieve it anytime.",
+            color=0x00CC66
+        )
+        embed.add_field(name="Key", value=f"```{key}```", inline=False)
+        embed.add_field(name="Expires", value=expiry_str, inline=True)
+        embed.set_footer(text="Vyron.cc")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@tree.command(name="addpanel", description="Post the Vyron Key Panel in this channel")
+async def addpanel(interaction: discord.Interaction):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    embed = discord.Embed(
+        title="Vyron Key Panel",
+        description=(
+            "If you're a buyer, click on the buttons below to redeem your key, "
+            "get the script, or reset your HWID.\n\n"
+            "Make sure to keep your `script_key` above the loader or it will not work."
+        ),
+        color=0x5080FF
+    )
+    embed.set_footer(text=f"Sent by {interaction.user} • Vyron.cc")
+
+    view = KeyPanelView()
+    await interaction.channel.send(embed=embed, view=view)
+    await interaction.response.send_message("✅ Panel posted.", ephemeral=True)
+
+
 @client.event
 async def on_ready():
     start_api_thread()
+    # Re-register persistent views so buttons work after restart
+    client.add_view(KeyPanelView())
     await tree.sync()
     print(f"Logged in as {client.user}")
 
