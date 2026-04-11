@@ -1403,11 +1403,242 @@ async def addpanel(interaction: discord.Interaction):
     await interaction.response.send_message("✅ Panel posted.", ephemeral=True)
 
 
+# ─────────────────────────────────────────────
+#  TICKET SYSTEM
+# ─────────────────────────────────────────────
+
+class TicketSelectView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(TicketSelect())
+
+
+class TicketSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(
+                label="Support",
+                description="Get help with an issue",
+                emoji="🎧",
+                value="support"
+            ),
+            discord.SelectOption(
+                label="Buy Another Key",
+                description="Purchase an additional key",
+                emoji="🛒",
+                value="buy"
+            ),
+        ]
+        super().__init__(
+            placeholder="📩  Open a ticket — make a selection",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id="ticket_select"
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        uid = str(interaction.user.id)
+        ticket_type = self.values[0]
+        data = load_data()
+
+        # Check if user already has an open ticket
+        open_tickets = data.setdefault("open_tickets", {})
+        if uid in open_tickets:
+            existing = guild.get_channel(open_tickets[uid])
+            if existing:
+                await interaction.response.send_message(
+                    f"❌ You already have an open ticket: {existing.mention}",
+                    ephemeral=True
+                )
+                return
+            else:
+                # Channel was deleted manually, clean up
+                del open_tickets[uid]
+
+        # Find the Owner role
+        owner_role = discord.utils.get(guild.roles, name=OWNER_ROLE_NAME)
+
+        # Build permission overwrites — private to user + Owner role only
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            interaction.user: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True
+            ),
+            guild.me: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                manage_channels=True,
+                read_message_history=True
+            ),
+        }
+        if owner_role:
+            overwrites[owner_role] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True
+            )
+
+        # Create ticket channel
+        label = "support" if ticket_type == "support" else "buy-key"
+        channel_name = f"ticket-{label}-{interaction.user.name}".lower().replace(" ", "-")[:100]
+
+        # Try to find or create a Tickets category
+        category = discord.utils.get(guild.categories, name="Tickets")
+        ticket_channel = await guild.create_text_channel(
+            name=channel_name,
+            overwrites=overwrites,
+            category=category,
+            reason=f"Ticket opened by {interaction.user}"
+        )
+
+        # Save open ticket
+        open_tickets[uid] = ticket_channel.id
+        save_data(data)
+
+        # Build the welcome embed inside the ticket
+        if ticket_type == "support":
+            title = "🎧 Support Ticket"
+            description = (
+                f"Hey {interaction.user.mention}, thanks for reaching out!\n\n"
+                "Please describe your issue in detail and a staff member will be with you shortly."
+            )
+            color = 0x5080FF
+        else:
+            title = "🛒 Purchase Ticket"
+            description = (
+                f"Hey {interaction.user.mention}, thanks for your interest!\n\n"
+                "Let us know what you'd like to purchase and a staff member will assist you shortly."
+            )
+            color = 0x00CC66
+
+        ticket_embed = discord.Embed(title=title, description=description, color=color)
+        ticket_embed.add_field(name="Opened by", value=interaction.user.mention, inline=True)
+        ticket_embed.add_field(name="Type", value="Support" if ticket_type == "support" else "Buy Another Key", inline=True)
+        ticket_embed.set_footer(text="Vyron.cc • Click Close Ticket when done")
+
+        close_view = CloseTicketView(uid)
+        owner_ping = owner_role.mention if owner_role else ""
+        await ticket_channel.send(
+            content=f"{interaction.user.mention} {owner_ping}",
+            embed=ticket_embed,
+            view=close_view
+        )
+
+        await interaction.response.send_message(
+            f"✅ Your ticket has been created: {ticket_channel.mention}",
+            ephemeral=True
+        )
+
+
+class CloseTicketView(discord.ui.View):
+    def __init__(self, owner_uid: str = None):
+        super().__init__(timeout=None)
+        self.owner_uid = owner_uid
+
+    @discord.ui.button(label="🔒 Close Ticket", style=discord.ButtonStyle.danger, custom_id="ticket_close")
+    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Only the ticket owner or Owner role can close
+        is_owner_role = has_owner_role(interaction)
+        data = load_data()
+        open_tickets = data.get("open_tickets", {})
+
+        # Find who owns this ticket
+        ticket_owner_uid = None
+        for uid, cid in open_tickets.items():
+            if cid == interaction.channel.id:
+                ticket_owner_uid = uid
+                break
+
+        if not is_owner_role and str(interaction.user.id) != ticket_owner_uid:
+            await interaction.response.send_message("❌ Only the ticket owner or staff can close this ticket.", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title="🔒 Ticket Closing",
+            description="This ticket will be deleted in 5 seconds.",
+            color=0xFF4444
+        )
+        embed.set_footer(text="Vyron.cc")
+        await interaction.response.send_message(embed=embed)
+
+        # Clean up open_tickets record
+        if ticket_owner_uid and ticket_owner_uid in open_tickets:
+            del open_tickets[ticket_owner_uid]
+            save_data(data)
+
+        await asyncio.sleep(5)
+        await interaction.channel.delete(reason="Ticket closed")
+
+
+@tree.command(name="addticketsys", description="Post the Vyron ticket system panel in this channel")
+async def addticketsys(interaction: discord.Interaction):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    embed = discord.Embed(
+        title="🎫 Vyron Support",
+        description=(
+            "Need help or want to purchase a key?\n\n"
+            "Select an option from the dropdown below to open a ticket.\n"
+            "Our staff will assist you as soon as possible."
+        ),
+        color=0x5080FF
+    )
+    embed.add_field(name="🎧 Support", value="Get help with an issue", inline=True)
+    embed.add_field(name="🛒 Buy Another Key", value="Purchase an additional key", inline=True)
+    embed.set_footer(text="Vyron.cc • Tickets are private between you and staff")
+
+    view = TicketSelectView()
+    await interaction.channel.send(embed=embed, view=view)
+    await interaction.response.send_message("✅ Ticket panel posted.", ephemeral=True)
+
+
+@tree.command(name="closeticket", description="Close the current ticket channel")
+async def closeticket(interaction: discord.Interaction):
+    if not has_owner_role(interaction):
+        # Check if they own this ticket
+        data = load_data()
+        uid = str(interaction.user.id)
+        open_tickets = data.get("open_tickets", {})
+        if open_tickets.get(uid) != interaction.channel.id:
+            await interaction.response.send_message("❌ This is not your ticket.", ephemeral=True)
+            return
+
+    data = load_data()
+    open_tickets = data.get("open_tickets", {})
+    ticket_owner_uid = None
+    for uid, cid in open_tickets.items():
+        if cid == interaction.channel.id:
+            ticket_owner_uid = uid
+            break
+
+    embed = discord.Embed(
+        title="🔒 Ticket Closing",
+        description="This ticket will be deleted in 5 seconds.",
+        color=0xFF4444
+    )
+    embed.set_footer(text="Vyron.cc")
+    await interaction.response.send_message(embed=embed)
+
+    if ticket_owner_uid and ticket_owner_uid in open_tickets:
+        del open_tickets[ticket_owner_uid]
+        save_data(data)
+
+    await asyncio.sleep(5)
+    await interaction.channel.delete(reason="Ticket closed")
+
+
 @client.event
 async def on_ready():
     start_api_thread()
     # Re-register persistent views so buttons work after restart
     client.add_view(KeyPanelView())
+    client.add_view(TicketSelectView())
+    client.add_view(CloseTicketView())
     await tree.sync()
     print(f"Logged in as {client.user}")
 
