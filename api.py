@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, redirect, Response
 import json, os, threading, time
 
 app = Flask(__name__)
@@ -20,9 +20,37 @@ pending_notifs_lock = threading.Lock()
 
 SESSION_TIMEOUT = 60  # seconds before a session is considered inactive
 
+DISCORD_INVITE = os.environ.get("DISCORD_INVITE", "https://discord.gg/yourinvite")
+
+# Browser user-agent keywords — if any match, redirect to Discord
+BROWSER_AGENTS = ("mozilla", "chrome", "safari", "firefox", "edge", "opera", "webkit")
+
+def _is_browser(ua: str) -> bool:
+    ua_lower = ua.lower()
+    return any(kw in ua_lower for kw in BROWSER_AGENTS)
+
 @app.route("/")
 def health():
     return "OK", 200
+
+@app.route("/source")
+def serve_source():
+    """
+    Serves mooze.txt to Roblox executors (HttpGet).
+    Redirects browsers to the Discord server instead.
+    """
+    ua = request.headers.get("User-Agent", "")
+    if _is_browser(ua):
+        return redirect(DISCORD_INVITE, code=302)
+
+    source_path = os.path.join(os.path.dirname(__file__), "mooze.txt")
+    if not os.path.exists(source_path):
+        return "-- source not found", 404
+
+    with open(source_path, "r", encoding="utf-8") as f:
+        source = f.read()
+
+    return Response(source, mimetype="text/plain")
 
 def load_data():
     if os.path.exists(DATA_FILE):
