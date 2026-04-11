@@ -1632,6 +1632,71 @@ async def closeticket(interaction: discord.Interaction):
     await interaction.channel.delete(reason="Ticket closed")
 
 
+@tree.command(name="checkexecutions", description="Check execution stats for all generated keys")
+async def checkexecutions(interaction: discord.Interaction):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    data = load_data()
+    now = int(time.time())
+
+    executions = data.get("key_executions", {})
+    last_exec = data.get("key_last_exec", {})
+    all_keys = {}
+
+    # Gather all permanent keys with their owner
+    for uid, keys in data.get("keys", {}).items():
+        for key in keys:
+            all_keys[key] = uid
+
+    if not all_keys:
+        await interaction.response.send_message("No keys have been generated yet.", ephemeral=True)
+        return
+
+    total_generated = len(all_keys)
+    total_executions = sum(executions.get(k, 0) for k in all_keys)
+    keys_never_used = sum(1 for k in all_keys if executions.get(k, 0) == 0)
+    keys_used = total_generated - keys_never_used
+
+    # Build per-key breakdown — sort by execution count descending
+    sorted_keys = sorted(all_keys.items(), key=lambda x: executions.get(x[0], 0), reverse=True)
+
+    embed = discord.Embed(title="📊 Key Execution Stats", color=0x5080FF)
+    embed.add_field(name="Total Keys Generated", value=str(total_generated), inline=True)
+    embed.add_field(name="Total Executions", value=str(total_executions), inline=True)
+    embed.add_field(name="Keys Ever Used", value=str(keys_used), inline=True)
+    embed.add_field(name="Keys Never Used", value=str(keys_never_used), inline=True)
+
+    # Show top 10 most executed keys
+    lines = []
+    for key, uid in sorted_keys[:10]:
+        count = executions.get(key, 0)
+        member = interaction.guild.get_member(int(uid))
+        owner_str = member.display_name if member else f"<@{uid}>"
+        expiry = data.get("key_expiry", {}).get(key)
+        if expiry is None:
+            expiry_str = "Lifetime"
+        elif now > expiry:
+            expiry_str = "Expired"
+        else:
+            # time left
+            secs_left = expiry - now
+            expiry_str = duration_label(secs_left)
+        last = last_exec.get(key)
+        last_str = f"<t:{last}:R>" if last else "Never"
+        lines.append(f"`{key[:24]}{'...' if len(key) > 24 else ''}`\n👤 {owner_str} • 🔁 {count} exec • ⏳ {expiry_str} • Last: {last_str}")
+
+    if lines:
+        embed.add_field(
+            name=f"Top Keys by Executions (showing {min(10, len(sorted_keys))}/{total_generated})",
+            value="\n\n".join(lines),
+            inline=False
+        )
+
+    embed.set_footer(text="Vyron.cc")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 @client.event
 async def on_ready():
     start_api_thread()
