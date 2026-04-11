@@ -1697,6 +1697,89 @@ async def checkexecutions(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+# ─────────────────────────────────────────────
+#  KEY EXPIRY DM SYSTEM
+# ─────────────────────────────────────────────
+
+async def expiry_check_loop():
+    """Runs every hour. DMs users whose keys have expired if dm_check is on."""
+    await client.wait_until_ready()
+    while not client.is_closed():
+        try:
+            data = load_data()
+            # Only run if dm_check is enabled (default on)
+            if data.get("dm_check_enabled", True):
+                now = int(time.time())
+                key_expiry = data.get("key_expiry", {})
+                notified = data.setdefault("expiry_notified", set() if False else [])
+                notified_set = set(notified)
+                changed = False
+
+                for uid, keys in data.get("keys", {}).items():
+                    for key in keys:
+                        expiry = key_expiry.get(key)
+                        if expiry is None:
+                            continue  # lifetime key
+                        if now >= expiry and key not in notified_set:
+                            # Key just expired — DM the user
+                            # Find the user in any guild
+                            user = None
+                            for guild in client.guilds:
+                                member = guild.get_member(int(uid))
+                                if member:
+                                    user = member
+                                    break
+                            if user:
+                                try:
+                                    embed = discord.Embed(
+                                        title="⏰ Your Key Has Expired",
+                                        description=(
+                                            "Your **Vyron V2** key has expired!\n\n"
+                                            "Buy a new one to get back in action. 🔑"
+                                        ),
+                                        color=0xFF4444
+                                    )
+                                    embed.add_field(name="Expired Key", value=f"```{key}```", inline=False)
+                                    embed.set_footer(text="Vyron.cc")
+                                    await user.send(embed=embed)
+                                except (discord.Forbidden, discord.HTTPException):
+                                    pass
+                            notified_set.add(key)
+                            changed = True
+
+                if changed:
+                    data["expiry_notified"] = list(notified_set)
+                    save_data(data)
+
+        except Exception as e:
+            print(f"[expiry_check_loop error] {e}")
+
+        await asyncio.sleep(3600)  # check every hour
+
+
+@tree.command(name="dmcheck", description="Toggle expired key DM notifications on or off")
+@app_commands.describe(state="on or off")
+@app_commands.choices(state=[
+    app_commands.Choice(name="on", value="on"),
+    app_commands.Choice(name="off", value="off"),
+])
+async def dmcheck(interaction: discord.Interaction, state: str):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    data = load_data()
+    enabled = state == "on"
+    data["dm_check_enabled"] = enabled
+    save_data(data)
+    status = "✅ **ON** — users will be DM'd when their key expires." if enabled else "🔕 **OFF** — expiry DMs are disabled."
+    embed = discord.Embed(
+        title="⏰ Expiry DM Notifications",
+        description=status,
+        color=0x00CC66 if enabled else 0xAAAAAA
+    )
+    embed.set_footer(text="Vyron.cc")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 @client.event
 async def on_ready():
     start_api_thread()
@@ -1704,6 +1787,8 @@ async def on_ready():
     client.add_view(KeyPanelView())
     client.add_view(TicketSelectView())
     client.add_view(CloseTicketView())
+    # Start background expiry check loop
+    asyncio.create_task(expiry_check_loop())
     await tree.sync()
     print(f"Logged in as {client.user}")
 
