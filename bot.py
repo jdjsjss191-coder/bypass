@@ -31,7 +31,7 @@ def save_data(data):
 
 def gen_key():
     chars = string.ascii_letters + string.digits
-    return "Vanta-" + "".join(random.choices(chars, k=15))
+    return "Vyron-" + "".join(random.choices(chars, k=15))
 
 def has_owner_role(interaction: discord.Interaction) -> bool:
     return any(r.name == OWNER_ROLE_NAME for r in interaction.user.roles)
@@ -83,9 +83,9 @@ def build_giveaway_embed(prize: str, host: discord.Member, end_time: int, entrie
     embed.add_field(name="Entries", value=str(len(entries)), inline=True)
     if not ended:
         embed.add_field(name="Ends", value=f"<t:{end_time}:R>", inline=True)
-        embed.set_footer(text="Click ✅ Join or ❌ Leave to manage your entry • Vanta.cc")
+        embed.set_footer(text="Click ✅ Join or ❌ Leave to manage your entry • Vyron.cc")
     else:
-        embed.set_footer(text="Giveaway ended • Vanta.cc")
+        embed.set_footer(text="Giveaway ended • Vyron.cc")
     return embed
 
 async def end_giveaway(message_id: int):
@@ -341,7 +341,7 @@ async def giveawaylist(interaction: discord.Interaction):
             value=f"Channel: {ch_mention}\nEntries: {len(g['entries'])}\nEnds: <t:{g['end_time']}:R>\nMessage ID: `{mid}`",
             inline=False
         )
-    embed.set_footer(text="Vanta.cc")
+    embed.set_footer(text="Vyron.cc")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -349,7 +349,7 @@ async def giveawaylist(interaction: discord.Interaction):
 #  EXISTING COMMANDS
 # ─────────────────────────────────────────────
 
-@tree.command(name="genv2key", description="Generate a Vanta V2 key for yourself")
+@tree.command(name="genv2key", description="Generate a Vyron V2 key for yourself")
 @app_commands.describe(duration="Duration: e.g. 1h, 7d, 2w, 1m, lifetime")
 async def genv2key(interaction: discord.Interaction, duration: str = "lifetime"):
     if not has_owner_role(interaction):
@@ -366,14 +366,14 @@ async def genv2key(interaction: discord.Interaction, duration: str = "lifetime")
     data.setdefault("key_created", {})[key] = int(time.time())
     data["keys"].setdefault(uid, []).append(key)
     save_data(data)
-    embed = discord.Embed(title="Vanta V2 Key", description=f"```{key}```", color=0x5080FF)
+    embed = discord.Embed(title="Vyron V2 Key", description=f"```{key}```", color=0x5080FF)
     embed.add_field(name="Duration", value=duration_label(secs), inline=True)
     if expiry:
         embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=True)
-    embed.set_footer(text="Vanta.cc")
+    embed.set_footer(text="Vyron.cc")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@tree.command(name="genv2keyto", description="Generate a Vanta V2 key and DM it to a user")
+@tree.command(name="genv2keyto", description="Generate a Vyron V2 key and DM it to a user")
 @app_commands.describe(user="The user to send the key to", duration="Duration: e.g. 1h, 7d, 2w, 1m, lifetime")
 async def genv2keyto(interaction: discord.Interaction, user: discord.Member, duration: str = "lifetime"):
     if not has_owner_role(interaction):
@@ -390,18 +390,18 @@ async def genv2keyto(interaction: discord.Interaction, user: discord.Member, dur
     data.setdefault("key_created", {})[key] = int(time.time())
     data["keys"].setdefault(uid, []).append(key)
     save_data(data)
-    dm_embed = discord.Embed(title="Vanta V2 Key", description=f"```{key}```", color=0x5080FF)
+    dm_embed = discord.Embed(title="Vyron V2 Key", description=f"```{key}```", color=0x5080FF)
     dm_embed.add_field(name="Duration", value=duration_label(secs), inline=True)
     if expiry:
         dm_embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=True)
-    dm_embed.set_footer(text="Vanta.cc")
+    dm_embed.set_footer(text="Vyron.cc")
     pub_embed = discord.Embed(
         title="🔑 Key Sent",
-        description=f"{interaction.user.mention} sent a Vanta V2 key to {user.mention}.",
+        description=f"{interaction.user.mention} sent a Vyron V2 key to {user.mention}.",
         color=0x5080FF
     )
     pub_embed.add_field(name="Duration", value=duration_label(secs), inline=True)
-    pub_embed.set_footer(text="Vanta.cc")
+    pub_embed.set_footer(text="Vyron.cc")
     try:
         await user.send(embed=dm_embed)
         await interaction.response.send_message(embed=pub_embed)
@@ -425,12 +425,12 @@ async def keyall(interaction: discord.Interaction):
         data.setdefault("temp_keys", {})
         data["temp_keys"].setdefault(uid, []).append({"key": key, "expiry": expiry})
         embed = discord.Embed(
-            title="Vanta V2 — Temporary Key (1 Hour)",
+            title="Vyron V2 — Temporary Key (1 Hour)",
             description=f"```{key}```",
             color=0xFFAA00
         )
         embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=False)
-        embed.set_footer(text="Vanta.cc • This key expires in 1 hour")
+        embed.set_footer(text="Vyron.cc • This key expires in 1 hour")
         try:
             await member.send(embed=embed)
             sent += 1
@@ -445,8 +445,8 @@ async def sendmessageto(interaction: discord.Interaction, user: discord.Member, 
     if not has_owner_role(interaction):
         return await deny(interaction)
     embed = discord.Embed(description=message, color=0x5080FF)
-    embed.set_author(name="Message from Vanta.cc")
-    embed.set_footer(text="Vanta.cc")
+    embed.set_author(name="Message from Vyron.cc")
+    embed.set_footer(text="Vyron.cc")
     try:
         await user.send(embed=embed)
         await interaction.response.send_message(f"Message sent to {user.mention}.", ephemeral=True)
@@ -474,7 +474,7 @@ async def checkkeys(interaction: discord.Interaction, user: discord.Member):
     if temp_keys:
         tlist = "\n".join(f"• {t['key']} (expires <t:{t['expiry']}:R>)" for t in temp_keys)
         embed.add_field(name=f"Active Temp Keys ({len(temp_keys)})", value=tlist, inline=False)
-    embed.set_footer(text="Vanta.cc")
+    embed.set_footer(text="Vyron.cc")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @tree.command(name="blacklist", description="Blacklist a user and DM them the reason")
@@ -487,11 +487,11 @@ async def blacklist(interaction: discord.Interaction, user: discord.Member, reas
     data["blacklist"][uid] = reason
     save_data(data)
     embed = discord.Embed(
-        title="You have been blacklisted from Vanta.cc",
+        title="You have been blacklisted from Vyron.cc",
         description=f"**Reason:** {reason}",
         color=0xFF2222
     )
-    embed.set_footer(text="Vanta.cc")
+    embed.set_footer(text="Vyron.cc")
     try:
         await user.send(embed=embed)
         await interaction.response.send_message(f"{user.mention} blacklisted. Reason: {reason}", ephemeral=True)
@@ -511,8 +511,8 @@ async def announce(interaction: discord.Interaction, message: str):
         await interaction.response.send_message("Announcement channel not found.", ephemeral=True)
         return
     embed = discord.Embed(description=message, color=0x5080FF)
-    embed.set_author(name="Vanta.cc Announcement")
-    embed.set_footer(text="Vanta.cc")
+    embed.set_author(name="Vyron.cc Announcement")
+    embed.set_footer(text="Vyron.cc")
     await channel.send(embed=embed)
     await interaction.response.send_message("Announcement sent.", ephemeral=True)
 
@@ -523,8 +523,8 @@ async def dmall(interaction: discord.Interaction, message: str):
         return await deny(interaction)
     await interaction.response.defer(ephemeral=True)
     embed = discord.Embed(description=message, color=0x5080FF)
-    embed.set_author(name="Message from Vanta.cc")
-    embed.set_footer(text="Vanta.cc")
+    embed.set_author(name="Message from Vyron.cc")
+    embed.set_footer(text="Vyron.cc")
     sent = 0
     failed = 0
     for member in interaction.guild.members:
@@ -577,7 +577,7 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
         color=0xFFAA00
     )
     dm_embed.add_field(name="Total Warnings", value=str(warn_count), inline=True)
-    dm_embed.set_footer(text="Vanta.cc")
+    dm_embed.set_footer(text="Vyron.cc")
     try:
         await user.send(embed=dm_embed)
     except discord.Forbidden:
@@ -591,7 +591,7 @@ async def warn(interaction: discord.Interaction, user: discord.Member, reason: s
     pub_embed.add_field(name="Reason", value=reason, inline=False)
     pub_embed.add_field(name="Warned by", value=interaction.user.mention, inline=True)
     pub_embed.add_field(name="Total Warnings", value=str(warn_count), inline=True)
-    pub_embed.set_footer(text="Vanta.cc")
+    pub_embed.set_footer(text="Vyron.cc")
     await interaction.response.send_message(embed=pub_embed)
 
 
@@ -615,7 +615,7 @@ async def warnings(interaction: discord.Interaction, user: discord.Member):
             value=f"**Reason:** {w['reason']}\n**By:** {by_str}",
             inline=False
         )
-    embed.set_footer(text="Vanta.cc")
+    embed.set_footer(text="Vyron.cc")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -655,7 +655,7 @@ async def stats(interaction: discord.Interaction):
         if exp is not None and now > exp:
             expired += 1
 
-    embed = discord.Embed(title="📊 Vanta.cc Stats", color=0x5080FF)
+    embed = discord.Embed(title="📊 Vyron.cc Stats", color=0x5080FF)
     embed.add_field(name="Server Members", value=str(total_members), inline=True)
     embed.add_field(name="Permanent Keys Issued", value=str(total_keys), inline=True)
     embed.add_field(name="Active Temp Keys", value=str(total_temp), inline=True)
@@ -663,7 +663,7 @@ async def stats(interaction: discord.Interaction):
     embed.add_field(name="Blacklisted Users", value=str(total_blacklisted), inline=True)
     embed.add_field(name="Total Warnings", value=str(total_warnings), inline=True)
     embed.add_field(name="Active Giveaways", value=str(total_active_giveaways), inline=True)
-    embed.set_footer(text="Vanta.cc")
+    embed.set_footer(text="Vyron.cc")
     await interaction.response.send_message(embed=embed)
 
 
@@ -699,11 +699,11 @@ async def unblacklist(interaction: discord.Interaction, user: discord.Member):
     del data["blacklist"][uid]
     save_data(data)
     embed = discord.Embed(
-        title="✅ You have been unblacklisted from Vanta.cc",
+        title="✅ You have been unblacklisted from Vyron.cc",
         description="Your access has been restored.",
         color=0x00CC66
     )
-    embed.set_footer(text="Vanta.cc")
+    embed.set_footer(text="Vyron.cc")
     try:
         await user.send(embed=embed)
     except discord.Forbidden:
@@ -758,7 +758,7 @@ async def keyinfo(interaction: discord.Interaction, key: str):
     embed.add_field(name="Expires", value=expiry_str, inline=True)
     embed.add_field(name="Created", value=f"<t:{created}:R>" if created else "Unknown", inline=True)
     embed.add_field(name="HWID", value=f"`{hwid}`", inline=False)
-    embed.set_footer(text="Vanta.cc")
+    embed.set_footer(text="Vyron.cc")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -801,7 +801,7 @@ async def extendkey(interaction: discord.Interaction, key: str, duration: str):
     embed = discord.Embed(title="✅ Key Extended", description=f"```{key}```", color=0x00CC66)
     embed.add_field(name="Added", value=duration_label(secs), inline=True)
     embed.add_field(name="New Expiry", value=f"<t:{new_expiry}:R>", inline=True)
-    embed.set_footer(text="Vanta.cc")
+    embed.set_footer(text="Vyron.cc")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -836,11 +836,11 @@ async def revokekey(interaction: discord.Interaction, key: str):
     # Notify the user
     dm_embed = discord.Embed(
         title="🔑 Key Revoked",
-        description=f"Your Vanta V2 key has been revoked.",
+        description=f"Your Vyron V2 key has been revoked.",
         color=0xFF4444
     )
     dm_embed.add_field(name="Key", value=f"```{key}```", inline=False)
-    dm_embed.set_footer(text="Vanta.cc")
+    dm_embed.set_footer(text="Vyron.cc")
     try:
         if owner:
             await owner.send(embed=dm_embed)
