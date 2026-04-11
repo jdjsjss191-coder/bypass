@@ -1103,6 +1103,84 @@ async def wipekeys(interaction: discord.Interaction, user: discord.Member):
     )
 
 
+@tree.command(name="customkey", description="Create a fully custom key and assign it to a user")
+@app_commands.describe(
+    user="The user to assign the key to",
+    key="The custom key string (e.g. Vyron-MyCustomKey123)",
+    duration="Duration: e.g. 1h, 7d, 2w, 1m, lifetime"
+)
+async def customkey(interaction: discord.Interaction, user: discord.Member, key: str, duration: str = "lifetime"):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    key = key.strip()
+
+    if not key:
+        await interaction.response.send_message("❌ Key cannot be empty.", ephemeral=True)
+        return
+
+    if len(key) < 4:
+        await interaction.response.send_message("❌ Key must be at least 4 characters.", ephemeral=True)
+        return
+
+    if len(key) > 64:
+        await interaction.response.send_message("❌ Key must be 64 characters or less.", ephemeral=True)
+        return
+
+    secs = parse_duration(duration)
+    if secs == 0:
+        await interaction.response.send_message("❌ Invalid duration. Use e.g. `1h`, `7d`, `2w`, `1m`, `lifetime`.", ephemeral=True)
+        return
+
+    data = load_data()
+
+    # Check if key already exists anywhere
+    all_existing = set()
+    for keys in data.get("keys", {}).values():
+        all_existing.update(keys)
+    for tkeys in data.get("temp_keys", {}).values():
+        for t in tkeys:
+            all_existing.add(t["key"])
+
+    if key in all_existing:
+        await interaction.response.send_message("❌ That key already exists. Choose a different one.", ephemeral=True)
+        return
+
+    uid = str(user.id)
+    expiry = int(time.time()) + secs if secs else None
+    data.setdefault("key_expiry", {})[key] = expiry
+    data.setdefault("key_created", {})[key] = int(time.time())
+    data["keys"].setdefault(uid, []).append(key)
+    save_data(data)
+
+    # DM the key to the user
+    dm_embed = discord.Embed(title="🔑 Vyron V2 Key", description=f"```{key}```", color=0x5080FF)
+    dm_embed.add_field(name="Duration", value=duration_label(secs), inline=True)
+    if expiry:
+        dm_embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=True)
+    dm_embed.set_footer(text="Vyron.cc")
+
+    # Public response
+    pub_embed = discord.Embed(
+        title="🔑 Custom Key Created",
+        description=f"{interaction.user.mention} created a custom key for {user.mention}.",
+        color=0x5080FF
+    )
+    pub_embed.add_field(name="Key", value=f"```{key}```", inline=False)
+    pub_embed.add_field(name="Duration", value=duration_label(secs), inline=True)
+    if expiry:
+        pub_embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=True)
+    pub_embed.set_footer(text="Vyron.cc")
+
+    try:
+        await user.send(embed=dm_embed)
+        pub_embed.description += "\n✅ Key sent via DM."
+    except discord.Forbidden:
+        pub_embed.description += "\n⚠️ Couldn't DM the user — they may have DMs disabled."
+
+    await interaction.response.send_message(embed=pub_embed)
+
+
 @client.event
 async def on_ready():
     start_api_thread()
