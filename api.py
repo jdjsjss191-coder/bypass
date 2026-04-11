@@ -1,9 +1,26 @@
-from flask import Flask, request, jsonify, redirect, Response
-import json, os, threading, time
+from flask import Flask, request, jsonify, redirect, Response, render_template_string, session
+import json, os, threading, time, secrets
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET", secrets.token_hex(32))
+
+# Allow the website to call the API from a different domain
+@app.after_request
+def add_cors(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Admin-Password"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return response
+
+@app.route("/admin/source", methods=["OPTIONS"])
+@app.route("/source", methods=["OPTIONS"])
+def options_handler():
+    return "", 204
+app.secret_key = os.environ.get("FLASK_SECRET", secrets.token_hex(32))
 DATA_FILE = "data.json"
 API_SECRET = os.environ.get("API_SECRET", "vyron_secret")
+DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "vyron_admin")
+SOURCE_FILE = os.path.join(os.path.dirname(__file__), "mooze.txt")
 
 # In-memory active sessions: key -> {hwid, last_seen, kick_reason}
 # A session is "active" if last_seen within 60 seconds
@@ -249,6 +266,323 @@ def notify_session():
         pending_notifs[key] = message
 
     return jsonify({"success": True}), 200
+
+
+# ─────────────────────────────────────────────
+#  ADMIN SOURCE API (used by the external website)
+# ─────────────────────────────────────────────
+
+def _check_admin_password(req) -> bool:
+    pw = req.headers.get("X-Admin-Password", "")
+    return pw == DASHBOARD_PASSWORD
+
+
+@app.route("/admin/source", methods=["GET"])
+def admin_get_source():
+    if not _check_admin_password(request):
+        return jsonify({"error": "Unauthorized"}), 403
+
+    source = ""
+    saved_at = None
+    if os.path.exists(SOURCE_FILE):
+        with open(SOURCE_FILE, "r", encoding="utf-8") as f:
+            source = f.read()
+        mtime = os.path.getmtime(SOURCE_FILE)
+        saved_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime))
+
+    return jsonify({"source": source, "saved_at": saved_at})
+
+
+@app.route("/admin/source", methods=["POST"])
+def admin_save_source():
+    if not _check_admin_password(request):
+        return jsonify({"success": False, "error": "Unauthorized"}), 403
+
+    body = request.get_json(force=True) or {}
+    source = body.get("source", "")
+
+    try:
+        with open(SOURCE_FILE, "w", encoding="utf-8") as f:
+            f.write(source)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ─────────────────────────────────────────────
+#  DASHBOARD
+# ─────────────────────────────────────────────
+
+DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vyron Source Editor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0d0d14;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    background: #13131f;
+    border-bottom: 1px solid #2a2a3d;
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  header h1 { font-size: 18px; color: #5080ff; letter-spacing: 1px; }
+  header span { font-size: 12px; color: #666; }
+  .logout { color: #ff5555; font-size: 13px; text-decoration: none; }
+  .logout:hover { text-decoration: underline; }
+  .container { flex: 1; display: flex; flex-direction: column; padding: 20px 24px; gap: 14px; }
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .btn {
+    padding: 9px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .btn:hover { opacity: 0.85; }
+  .btn-save { background: #5080ff; color: #fff; }
+  .btn-discard { background: #2a2a3d; color: #aaa; }
+  .status {
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 5px;
+    display: none;
+  }
+  .status.success { background: #1a3a1a; color: #4caf50; display: inline-block; }
+  .status.error   { background: #3a1a1a; color: #f44336; display: inline-block; }
+  .meta { font-size: 12px; color: #555; margin-left: auto; }
+  #editor {
+    flex: 1;
+    width: 100%;
+    min-height: 70vh;
+    background: #13131f;
+    border: 1px solid #2a2a3d;
+    border-radius: 8px;
+    color: #e0e0e0;
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 16px;
+    resize: vertical;
+    outline: none;
+    tab-size: 4;
+  }
+  #editor:focus { border-color: #5080ff; }
+  .line-count { font-size: 12px; color: #555; }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚡ Vyron Source Editor</h1>
+  <div style="display:flex;align-items:center;gap:16px;">
+    <span id="lineCount" class="line-count"></span>
+    <a href="/dashboard/logout" class="logout">Logout</a>
+  </div>
+</header>
+<div class="container">
+  <div class="toolbar">
+    <button class="btn btn-save" onclick="saveSource()">💾 Save & Publish</button>
+    <button class="btn btn-discard" onclick="discardChanges()">↩ Discard</button>
+    <span id="status" class="status"></span>
+    <span class="meta" id="savedAt">{{ saved_at }}</span>
+  </div>
+  <textarea id="editor" spellcheck="false">{{ source }}</textarea>
+</div>
+<script>
+  const original = document.getElementById('editor').value;
+
+  function updateLineCount() {
+    const lines = document.getElementById('editor').value.split('\\n').length;
+    document.getElementById('lineCount').textContent = lines + ' lines';
+  }
+
+  document.getElementById('editor').addEventListener('input', updateLineCount);
+  document.getElementById('editor').addEventListener('keydown', function(e) {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const s = this.selectionStart, end = this.selectionEnd;
+      this.value = this.value.substring(0, s) + '    ' + this.value.substring(end);
+      this.selectionStart = this.selectionEnd = s + 4;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      e.preventDefault();
+      saveSource();
+    }
+  });
+
+  updateLineCount();
+
+  function showStatus(msg, type) {
+    const el = document.getElementById('status');
+    el.textContent = msg;
+    el.className = 'status ' + type;
+    setTimeout(() => { el.className = 'status'; }, 3000);
+  }
+
+  function saveSource() {
+    const content = document.getElementById('editor').value;
+    fetch('/dashboard/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: content })
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (d.success) {
+        showStatus('✅ Published successfully', 'success');
+        document.getElementById('savedAt').textContent = 'Last saved: ' + new Date().toLocaleTimeString();
+      } else {
+        showStatus('❌ ' + (d.error || 'Save failed'), 'error');
+      }
+    })
+    .catch(() => showStatus('❌ Network error', 'error'));
+  }
+
+  function discardChanges() {
+    if (confirm('Discard all unsaved changes?')) {
+      document.getElementById('editor').value = original;
+      updateLineCount();
+    }
+  }
+</script>
+</body>
+</html>"""
+
+LOGIN_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vyron Dashboard Login</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0d0d14;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .card {
+    background: #13131f;
+    border: 1px solid #2a2a3d;
+    border-radius: 12px;
+    padding: 40px 36px;
+    width: 340px;
+    text-align: center;
+  }
+  h1 { color: #5080ff; font-size: 22px; margin-bottom: 6px; }
+  p { color: #555; font-size: 13px; margin-bottom: 28px; }
+  input[type=password] {
+    width: 100%;
+    padding: 11px 14px;
+    background: #0d0d14;
+    border: 1px solid #2a2a3d;
+    border-radius: 7px;
+    color: #e0e0e0;
+    font-size: 14px;
+    outline: none;
+    margin-bottom: 14px;
+  }
+  input[type=password]:focus { border-color: #5080ff; }
+  button {
+    width: 100%;
+    padding: 11px;
+    background: #5080ff;
+    border: none;
+    border-radius: 7px;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { opacity: 0.88; }
+  .error { color: #f44336; font-size: 13px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>⚡ Vyron.cc</h1>
+  <p>Source Editor — Staff Only</p>
+  <form method="POST">
+    <input type="password" name="password" placeholder="Password" autofocus>
+    <button type="submit">Login</button>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  </form>
+</div>
+</body>
+</html>"""
+
+
+@app.route("/dashboard", methods=["GET"])
+def dashboard():
+    if not session.get("authed"):
+        return redirect("/dashboard/login")
+
+    source = ""
+    saved_at = "Never"
+    if os.path.exists(SOURCE_FILE):
+        with open(SOURCE_FILE, "r", encoding="utf-8") as f:
+            source = f.read()
+        mtime = os.path.getmtime(SOURCE_FILE)
+        saved_at = "Last saved: " + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime))
+
+    return render_template_string(DASHBOARD_HTML, source=source, saved_at=saved_at)
+
+
+@app.route("/dashboard/login", methods=["GET", "POST"])
+def dashboard_login():
+    error = None
+    if request.method == "POST":
+        pw = request.form.get("password", "")
+        if pw == DASHBOARD_PASSWORD:
+            session["authed"] = True
+            return redirect("/dashboard")
+        else:
+            error = "Incorrect password."
+    return render_template_string(LOGIN_HTML, error=error)
+
+
+@app.route("/dashboard/logout")
+def dashboard_logout():
+    session.clear()
+    return redirect("/dashboard/login")
+
+
+@app.route("/dashboard/save", methods=["POST"])
+def dashboard_save():
+    if not session.get("authed"):
+        return jsonify({"success": False, "error": "Unauthorized"}), 403
+
+    body = request.get_json(force=True) or {}
+    source = body.get("source", "")
+
+    try:
+        with open(SOURCE_FILE, "w", encoding="utf-8") as f:
+            f.write(source)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 def run_api():
