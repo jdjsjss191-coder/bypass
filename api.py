@@ -14,6 +14,10 @@ active_sessions_lock = threading.Lock()
 pending_kicks: dict = {}
 pending_kicks_lock = threading.Lock()
 
+# Pending notifications: key -> message (set by bot, consumed by /heartbeat)
+pending_notifs: dict = {}
+pending_notifs_lock = threading.Lock()
+
 SESSION_TIMEOUT = 60  # seconds before a session is considered inactive
 
 @app.route("/")
@@ -123,7 +127,13 @@ def heartbeat():
                 active_sessions.pop(key, None)
             return jsonify({"kick": True, "reason": reason}), 200
 
-    return jsonify({"kick": False}), 200
+    # Check for pending notification
+    with pending_notifs_lock:
+        if key in pending_notifs:
+            message = pending_notifs.pop(key)
+            return jsonify({"kick": False, "notify": True, "message": message}), 200
+
+    return jsonify({"kick": False, "notify": False}), 200
 
 
 @app.route("/sessions", methods=["GET"])
@@ -186,6 +196,26 @@ def kick_session():
 
     with pending_kicks_lock:
         pending_kicks[key] = reason
+
+    return jsonify({"success": True}), 200
+
+
+@app.route("/notify", methods=["POST"])
+def notify_session():
+    """Queue a notification for a key. Called by the bot."""
+    body = request.get_json(force=True) or {}
+    key     = body.get("key", "").strip()
+    message = body.get("message", "").strip()
+    secret  = body.get("secret", "").strip()
+
+    if secret != API_SECRET:
+        return jsonify({"success": False, "reason": "Unauthorized"}), 403
+
+    if not key or not message:
+        return jsonify({"success": False, "reason": "Missing key or message"}), 400
+
+    with pending_notifs_lock:
+        pending_notifs[key] = message
 
     return jsonify({"success": True}), 200
 
