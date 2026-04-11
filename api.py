@@ -3,7 +3,7 @@ import json, os, threading
 
 app = Flask(__name__)
 DATA_FILE = "data.json"
-API_SECRET = os.environ.get("API_SECRET", "vanta_secret")
+API_SECRET = os.environ.get("API_SECRET", "vyron_secret")
 
 @app.route("/")
 def health():
@@ -64,11 +64,20 @@ def check_key():
     if key not in key_hwid:
         # first use — bind hwid
         key_hwid[key] = hwid
+        # track execution
+        executions = data.setdefault("key_executions", {})
+        executions[key] = executions.get(key, 0) + 1
         save_data(data)
         return jsonify({"valid": True, "reason": "Key bound to HWID"}), 200
     elif key_hwid[key] != hwid:
         return jsonify({"valid": False, "reason": "HWID mismatch"}), 200
     else:
+        # valid execution — track it
+        import time as _time
+        executions = data.setdefault("key_executions", {})
+        executions[key] = executions.get(key, 0) + 1
+        data.setdefault("key_last_exec", {})[key] = int(_time.time())
+        save_data(data)
         return jsonify({"valid": True, "reason": "OK"}), 200
 
 def run_api():
