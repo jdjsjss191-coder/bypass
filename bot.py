@@ -1961,6 +1961,120 @@ async def activesessions(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 
+@tree.command(name="transferkey", description="Transfer a key to another user")
+@app_commands.describe(
+    key="The key to transfer",
+    new_user="The user to transfer the key to",
+    mode="Move (remove from old user) or Copy (both users keep it)"
+)
+@app_commands.choices(mode=[
+    app_commands.Choice(name="Move — only new user gets it", value="move"),
+    app_commands.Choice(name="Copy — both users keep it", value="copy"),
+])
+async def transferkey(interaction: discord.Interaction, key: str, new_user: discord.Member, mode: str):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    key = key.strip()
+    data = load_data()
+
+    # Find current owner
+    old_uid = None
+    for uid, keys in data.get("keys", {}).items():
+        if key in keys:
+            old_uid = uid
+            break
+
+    if not old_uid:
+        await interaction.response.send_message("❌ Key not found.", ephemeral=True)
+        return
+
+    new_uid = str(new_user.id)
+
+    # Check new user doesn't already have it
+    if key in data.get("keys", {}).get(new_uid, []):
+        await interaction.response.send_message(
+            f"❌ {new_user.mention} already has that key.", ephemeral=True
+        )
+        return
+
+    old_member = interaction.guild.get_member(int(old_uid))
+    old_str = old_member.mention if old_member else f"<@{old_uid}>"
+
+    if mode == "move":
+        # Remove from old user
+        data["keys"][old_uid].remove(key)
+        # Add to new user
+        data["keys"].setdefault(new_uid, []).append(key)
+        save_data(data)
+
+        # DM old user
+        try:
+            if old_member:
+                dm = discord.Embed(
+                    title="🔑 Key Transferred",
+                    description=f"Your key has been transferred to another user.",
+                    color=0xFF9900
+                )
+                dm.add_field(name="Key", value=f"```{key}```", inline=False)
+                dm.set_footer(text="Vyron.cc")
+                await old_member.send(embed=dm)
+        except discord.Forbidden:
+            pass
+
+        # DM new user
+        try:
+            expiry = data.get("key_expiry", {}).get(key)
+            dm2 = discord.Embed(
+                title="🔑 Key Received",
+                description=f"A Vyron V2 key has been transferred to you.",
+                color=0x00CC66
+            )
+            dm2.add_field(name="Key", value=f"```{key}```", inline=False)
+            dm2.add_field(name="Expires", value=f"<t:{expiry}:R>" if expiry else "Lifetime", inline=True)
+            dm2.set_footer(text="Vyron.cc")
+            await new_user.send(embed=dm2)
+        except discord.Forbidden:
+            pass
+
+        embed = discord.Embed(
+            title="🔑 Key Moved",
+            description=f"Key moved from {old_str} → {new_user.mention}.\n{old_str} no longer has access.",
+            color=0xFF9900
+        )
+
+    else:  # copy
+        # Keep on old user, add to new user
+        data["keys"].setdefault(new_uid, []).append(key)
+        save_data(data)
+
+        # DM new user
+        try:
+            expiry = data.get("key_expiry", {}).get(key)
+            dm2 = discord.Embed(
+                title="🔑 Key Received",
+                description=f"A Vyron V2 key has been shared with you.",
+                color=0x00CC66
+            )
+            dm2.add_field(name="Key", value=f"```{key}```", inline=False)
+            dm2.add_field(name="Expires", value=f"<t:{expiry}:R>" if expiry else "Lifetime", inline=True)
+            dm2.set_footer(text="Vyron.cc")
+            await new_user.send(embed=dm2)
+        except discord.Forbidden:
+            pass
+
+        embed = discord.Embed(
+            title="🔑 Key Copied",
+            description=f"Key copied to {new_user.mention}.\n{old_str} still has access too.",
+            color=0x5080FF
+        )
+
+    embed.add_field(name="Key", value=f"```{key}```", inline=False)
+    embed.add_field(name="Mode", value="Move" if mode == "move" else "Copy", inline=True)
+    embed.set_footer(text="Vyron.cc")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 @client.event
 async def on_ready():
     start_api_thread()
