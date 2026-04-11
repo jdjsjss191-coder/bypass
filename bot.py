@@ -363,6 +363,7 @@ async def genv2key(interaction: discord.Interaction, duration: str = "lifetime")
     uid = str(interaction.user.id)
     expiry = int(time.time()) + secs if secs else None
     data.setdefault("key_expiry", {})[key] = expiry
+    data.setdefault("key_created", {})[key] = int(time.time())
     data["keys"].setdefault(uid, []).append(key)
     save_data(data)
     embed = discord.Embed(title="Vanta V2 Key", description=f"```{key}```", color=0x5080FF)
@@ -386,18 +387,26 @@ async def genv2keyto(interaction: discord.Interaction, user: discord.Member, dur
     uid = str(user.id)
     expiry = int(time.time()) + secs if secs else None
     data.setdefault("key_expiry", {})[key] = expiry
+    data.setdefault("key_created", {})[key] = int(time.time())
     data["keys"].setdefault(uid, []).append(key)
     save_data(data)
-    embed = discord.Embed(title="Vanta V2 Key", description=f"```{key}```", color=0x5080FF)
-    embed.add_field(name="Duration", value=duration_label(secs), inline=True)
+    dm_embed = discord.Embed(title="Vanta V2 Key", description=f"```{key}```", color=0x5080FF)
+    dm_embed.add_field(name="Duration", value=duration_label(secs), inline=True)
     if expiry:
-        embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=True)
-    embed.set_footer(text="Vanta.cc")
+        dm_embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=True)
+    dm_embed.set_footer(text="Vanta.cc")
+    pub_embed = discord.Embed(
+        title="🔑 Key Sent",
+        description=f"{interaction.user.mention} sent a Vanta V2 key to {user.mention}.",
+        color=0x5080FF
+    )
+    pub_embed.add_field(name="Duration", value=duration_label(secs), inline=True)
+    pub_embed.set_footer(text="Vanta.cc")
     try:
-        await user.send(embed=embed)
-        await interaction.response.send_message(f"Key sent to {user.mention} via DM. Duration: {duration_label(secs)}", ephemeral=True)
+        await user.send(embed=dm_embed)
+        await interaction.response.send_message(embed=pub_embed)
     except discord.Forbidden:
-        await interaction.response.send_message(f"Couldn't DM {user.mention} — they may have DMs disabled.", ephemeral=True)
+        await interaction.response.send_message(f"Couldn't DM {user.mention} — they may have DMs disabled.")
 
 @tree.command(name="keyall", description="Send a 1-hour temporary key to every member via DM")
 async def keyall(interaction: discord.Interaction):
@@ -542,6 +551,307 @@ async def resethwid(interaction: discord.Interaction, key: str):
     data["key_hwid"] = key_hwid
     save_data(data)
     await interaction.response.send_message(f"HWID reset for `{key}`. Next use will bind a new HWID.", ephemeral=True)
+
+# ─────────────────────────────────────────────
+#  NEW COMMANDS
+# ─────────────────────────────────────────────
+
+@tree.command(name="warn", description="Warn a user with a reason")
+@app_commands.describe(user="The user to warn", reason="Reason for the warning")
+async def warn(interaction: discord.Interaction, user: discord.Member, reason: str):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    data = load_data()
+    uid = str(user.id)
+    data.setdefault("warnings", {}).setdefault(uid, []).append({
+        "reason": reason,
+        "by": str(interaction.user.id),
+        "at": int(time.time())
+    })
+    save_data(data)
+    warn_count = len(data["warnings"][uid])
+    # DM the user
+    dm_embed = discord.Embed(
+        title="⚠️ You have been warned",
+        description=f"**Reason:** {reason}",
+        color=0xFFAA00
+    )
+    dm_embed.add_field(name="Total Warnings", value=str(warn_count), inline=True)
+    dm_embed.set_footer(text="Vanta.cc")
+    try:
+        await user.send(embed=dm_embed)
+    except discord.Forbidden:
+        pass
+    # Public response
+    pub_embed = discord.Embed(
+        title="⚠️ Warning Issued",
+        description=f"{user.mention} has been warned.",
+        color=0xFFAA00
+    )
+    pub_embed.add_field(name="Reason", value=reason, inline=False)
+    pub_embed.add_field(name="Warned by", value=interaction.user.mention, inline=True)
+    pub_embed.add_field(name="Total Warnings", value=str(warn_count), inline=True)
+    pub_embed.set_footer(text="Vanta.cc")
+    await interaction.response.send_message(embed=pub_embed)
+
+
+@tree.command(name="warnings", description="Check warnings for a user")
+@app_commands.describe(user="The user to check warnings for")
+async def warnings(interaction: discord.Interaction, user: discord.Member):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    data = load_data()
+    uid = str(user.id)
+    warns = data.get("warnings", {}).get(uid, [])
+    if not warns:
+        await interaction.response.send_message(f"{user.mention} has no warnings.", ephemeral=True)
+        return
+    embed = discord.Embed(title=f"⚠️ Warnings for {user.display_name}", color=0xFFAA00)
+    for i, w in enumerate(warns, 1):
+        by = interaction.guild.get_member(int(w["by"]))
+        by_str = by.mention if by else f"<@{w['by']}>"
+        embed.add_field(
+            name=f"Warning #{i} — <t:{w['at']}:R>",
+            value=f"**Reason:** {w['reason']}\n**By:** {by_str}",
+            inline=False
+        )
+    embed.set_footer(text="Vanta.cc")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@tree.command(name="clearwarnings", description="Clear all warnings for a user")
+@app_commands.describe(user="The user to clear warnings for")
+async def clearwarnings(interaction: discord.Interaction, user: discord.Member):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    data = load_data()
+    uid = str(user.id)
+    data.setdefault("warnings", {}).pop(uid, None)
+    save_data(data)
+    await interaction.response.send_message(f"✅ Cleared all warnings for {user.mention}.", ephemeral=True)
+
+
+@tree.command(name="stats", description="Show bot and server stats")
+async def stats(interaction: discord.Interaction):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    data = load_data()
+    now = int(time.time())
+
+    total_keys = sum(len(v) for v in data.get("keys", {}).values())
+    total_temp = sum(
+        sum(1 for t in tkeys if t["expiry"] > now)
+        for tkeys in data.get("temp_keys", {}).values()
+    )
+    total_blacklisted = len(data.get("blacklist", {}))
+    total_warnings = sum(len(v) for v in data.get("warnings", {}).values())
+    total_members = interaction.guild.member_count
+    total_active_giveaways = len(active_giveaways)
+
+    # Count expired keys
+    expired = 0
+    key_expiry = data.get("key_expiry", {})
+    for key, exp in key_expiry.items():
+        if exp is not None and now > exp:
+            expired += 1
+
+    embed = discord.Embed(title="📊 Vanta.cc Stats", color=0x5080FF)
+    embed.add_field(name="Server Members", value=str(total_members), inline=True)
+    embed.add_field(name="Permanent Keys Issued", value=str(total_keys), inline=True)
+    embed.add_field(name="Active Temp Keys", value=str(total_temp), inline=True)
+    embed.add_field(name="Expired Keys", value=str(expired), inline=True)
+    embed.add_field(name="Blacklisted Users", value=str(total_blacklisted), inline=True)
+    embed.add_field(name="Total Warnings", value=str(total_warnings), inline=True)
+    embed.add_field(name="Active Giveaways", value=str(total_active_giveaways), inline=True)
+    embed.set_footer(text="Vanta.cc")
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="slowmode", description="Set slowmode on a channel")
+@app_commands.describe(
+    seconds="Slowmode delay in seconds (0 to disable)",
+    channel="Channel to apply slowmode to (defaults to current channel)"
+)
+async def slowmode(interaction: discord.Interaction, seconds: int, channel: discord.TextChannel = None):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    target = channel or interaction.channel
+    if seconds < 0 or seconds > 21600:
+        await interaction.response.send_message("❌ Slowmode must be between 0 and 21600 seconds.", ephemeral=True)
+        return
+    await target.edit(slowmode_delay=seconds)
+    if seconds == 0:
+        await interaction.response.send_message(f"✅ Slowmode disabled in {target.mention}.")
+    else:
+        await interaction.response.send_message(f"✅ Slowmode set to **{seconds}s** in {target.mention}.")
+
+
+@tree.command(name="unblacklist", description="Remove a user from the blacklist")
+@app_commands.describe(user="The user to unblacklist")
+async def unblacklist(interaction: discord.Interaction, user: discord.Member):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    data = load_data()
+    uid = str(user.id)
+    if uid not in data.get("blacklist", {}):
+        await interaction.response.send_message(f"{user.mention} is not blacklisted.", ephemeral=True)
+        return
+    del data["blacklist"][uid]
+    save_data(data)
+    embed = discord.Embed(
+        title="✅ You have been unblacklisted from Vanta.cc",
+        description="Your access has been restored.",
+        color=0x00CC66
+    )
+    embed.set_footer(text="Vanta.cc")
+    try:
+        await user.send(embed=embed)
+    except discord.Forbidden:
+        pass
+    await interaction.response.send_message(f"✅ {user.mention} has been unblacklisted.", ephemeral=True)
+
+
+@tree.command(name="keyinfo", description="Show info about a specific key")
+@app_commands.describe(key="The key to look up")
+async def keyinfo(interaction: discord.Interaction, key: str):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    data = load_data()
+    key = key.strip()
+
+    # Find which user owns this key
+    owner_uid = None
+    for uid, keys in data.get("keys", {}).items():
+        if key in keys:
+            owner_uid = uid
+            break
+
+    if not owner_uid:
+        await interaction.response.send_message("❌ Key not found.", ephemeral=True)
+        return
+
+    owner = interaction.guild.get_member(int(owner_uid))
+    owner_str = owner.mention if owner else f"<@{owner_uid}>"
+
+    now = int(time.time())
+    expiry = data.get("key_expiry", {}).get(key)
+    created = data.get("key_created", {}).get(key)
+    hwid = data.get("key_hwid", {}).get(key, "Not bound yet")
+    blacklisted = owner_uid in data.get("blacklist", {})
+
+    if expiry is None:
+        expiry_str = "Lifetime"
+        status = "✅ Active"
+    elif now > expiry:
+        expiry_str = f"<t:{expiry}:R>"
+        status = "❌ Expired"
+    else:
+        expiry_str = f"<t:{expiry}:R>"
+        status = "✅ Active"
+
+    if blacklisted:
+        status = f"🚫 Owner Blacklisted"
+
+    embed = discord.Embed(title="🔑 Key Info", description=f"```{key}```", color=0x5080FF)
+    embed.add_field(name="Owner", value=owner_str, inline=True)
+    embed.add_field(name="Status", value=status, inline=True)
+    embed.add_field(name="Expires", value=expiry_str, inline=True)
+    embed.add_field(name="Created", value=f"<t:{created}:R>" if created else "Unknown", inline=True)
+    embed.add_field(name="HWID", value=f"`{hwid}`", inline=False)
+    embed.set_footer(text="Vanta.cc")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@tree.command(name="extendkey", description="Extend the expiry of a key")
+@app_commands.describe(key="The key to extend", duration="Extra time to add: e.g. 7d, 1m, 1h")
+async def extendkey(interaction: discord.Interaction, key: str, duration: str):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    secs = parse_duration(duration)
+    if not secs:
+        await interaction.response.send_message("❌ Invalid duration. Use e.g. `1h`, `7d`, `1m`. Lifetime not valid here.", ephemeral=True)
+        return
+
+    data = load_data()
+    key = key.strip()
+
+    # Check key exists
+    found = any(key in keys for keys in data.get("keys", {}).values())
+    if not found:
+        await interaction.response.send_message("❌ Key not found.", ephemeral=True)
+        return
+
+    key_expiry = data.setdefault("key_expiry", {})
+    now = int(time.time())
+    current_expiry = key_expiry.get(key)
+
+    if current_expiry is None:
+        # Was lifetime — set expiry from now
+        new_expiry = now + secs
+    elif current_expiry < now:
+        # Already expired — extend from now
+        new_expiry = now + secs
+    else:
+        # Still active — add on top
+        new_expiry = current_expiry + secs
+
+    key_expiry[key] = new_expiry
+    save_data(data)
+
+    embed = discord.Embed(title="✅ Key Extended", description=f"```{key}```", color=0x00CC66)
+    embed.add_field(name="Added", value=duration_label(secs), inline=True)
+    embed.add_field(name="New Expiry", value=f"<t:{new_expiry}:R>", inline=True)
+    embed.set_footer(text="Vanta.cc")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@tree.command(name="revokekey", description="Revoke and delete a key from a user")
+@app_commands.describe(key="The key to revoke")
+async def revokekey(interaction: discord.Interaction, key: str):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    data = load_data()
+    key = key.strip()
+
+    owner_uid = None
+    for uid, keys in data.get("keys", {}).items():
+        if key in keys:
+            owner_uid = uid
+            keys.remove(key)
+            break
+
+    if not owner_uid:
+        await interaction.response.send_message("❌ Key not found.", ephemeral=True)
+        return
+
+    # Clean up related data
+    data.get("key_expiry", {}).pop(key, None)
+    data.get("key_hwid", {}).pop(key, None)
+    data.get("key_created", {}).pop(key, None)
+    save_data(data)
+
+    owner = interaction.guild.get_member(int(owner_uid))
+    owner_str = owner.mention if owner else f"<@{owner_uid}>"
+
+    # Notify the user
+    dm_embed = discord.Embed(
+        title="🔑 Key Revoked",
+        description=f"Your Vanta V2 key has been revoked.",
+        color=0xFF4444
+    )
+    dm_embed.add_field(name="Key", value=f"```{key}```", inline=False)
+    dm_embed.set_footer(text="Vanta.cc")
+    try:
+        if owner:
+            await owner.send(embed=dm_embed)
+    except discord.Forbidden:
+        pass
+
+    await interaction.response.send_message(
+        f"✅ Key `{key}` revoked from {owner_str}.",
+        ephemeral=True
+    )
+
 
 @client.event
 async def on_ready():
