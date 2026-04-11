@@ -1862,6 +1862,50 @@ class SessionsView(discord.ui.View):
         return callback
 
 
+@tree.command(name="notifyuser", description="Send an in-game notification to a user running the script")
+@app_commands.describe(
+    key="The key of the user to notify",
+    message="The message to show them in-game"
+)
+async def notifyuser(interaction: discord.Interaction, key: str, message: str):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    api_secret = os.environ.get("API_SECRET", "vyron_secret")
+
+    try:
+        payload = json.dumps({
+            "key": key.strip(),
+            "message": message.strip(),
+            "secret": api_secret
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{API_BASE}/notify",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            result = json.loads(resp.read())
+
+        if result.get("success"):
+            embed = discord.Embed(
+                title="📨 Notification Queued",
+                description=f"Your message will appear in-game within 15 seconds.",
+                color=0x5080FF
+            )
+            embed.add_field(name="Key", value=f"`{key[:24]}{'...' if len(key) > 24 else ''}`", inline=True)
+            embed.add_field(name="Message", value=message, inline=False)
+            embed.set_footer(text="Vyron.cc")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(
+                f"❌ Failed: {result.get('reason', 'Unknown error')}", ephemeral=True
+            )
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Error contacting API: `{e}`", ephemeral=True)
+
+
 @tree.command(name="activesessions", description="View all users currently running the script")
 async def activesessions(interaction: discord.Interaction):
     if not has_owner_role(interaction):
