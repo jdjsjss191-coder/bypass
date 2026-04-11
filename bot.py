@@ -1780,6 +1780,143 @@ async def dmcheck(interaction: discord.Interaction, state: str):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+# ─────────────────────────────────────────────
+#  ACTIVE SESSIONS
+# ─────────────────────────────────────────────
+
+import urllib.request
+import urllib.parse
+
+API_BASE = os.environ.get("API_BASE", "http://localhost:8080")
+
+class KickModal(discord.ui.Modal, title="Kick User"):
+    reason_input = discord.ui.TextInput(
+        label="Reason",
+        placeholder="Enter kick reason...",
+        required=True,
+        max_length=200
+    )
+
+    def __init__(self, key: str):
+        super().__init__()
+        self.key = key
+
+    async def on_submit(self, interaction: discord.Interaction):
+        reason = self.reason_input.value.strip()
+        api_secret = os.environ.get("API_SECRET", "vyron_secret")
+
+        try:
+            payload = json.dumps({
+                "key": self.key,
+                "reason": reason,
+                "secret": api_secret
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"{API_BASE}/kick",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                result = json.loads(resp.read())
+
+            if result.get("success"):
+                await interaction.response.send_message(
+                    f"✅ Kick queued for key `{self.key[:20]}...`\nReason: **{reason}**\nThey will be kicked within 15 seconds.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    f"❌ Failed to kick: {result.get('reason', 'Unknown error')}",
+                    ephemeral=True
+                )
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ Error contacting API: `{e}`",
+                ephemeral=True
+            )
+
+
+class SessionsView(discord.ui.View):
+    def __init__(self, sessions: list):
+        super().__init__(timeout=120)
+        self.sessions = sessions
+        # Add a kick button for each session (max 5 per view due to Discord limits)
+        for i, s in enumerate(sessions[:5]):
+            short_key = s["key"][:16] + "..."
+            btn = discord.ui.Button(
+                label=f"Kick #{i+1}",
+                style=discord.ButtonStyle.danger,
+                custom_id=f"kick_session_{i}",
+                row=i // 5
+            )
+            btn.callback = self._make_callback(s["key"])
+            self.add_item(btn)
+
+    def _make_callback(self, key: str):
+        async def callback(interaction: discord.Interaction):
+            if not has_owner_role(interaction):
+                await interaction.response.send_message("❌ You need the **Owner** role.", ephemeral=True)
+                return
+            await interaction.response.send_modal(KickModal(key=key))
+        return callback
+
+
+@tree.command(name="activesessions", description="View all users currently running the script")
+async def activesessions(interaction: discord.Interaction):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        req = urllib.request.Request(f"{API_BASE}/sessions", method="GET")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            sessions = json.loads(resp.read())
+    except Exception as e:
+        await interaction.followup.send(f"❌ Could not reach API: `{e}`", ephemeral=True)
+        return
+
+    if not sessions:
+        await interaction.followup.send("No active sessions right now.", ephemeral=True)
+        return
+
+    now = int(time.time())
+    embed = discord.Embed(
+        title="🟢 Active Script Sessions",
+        description=f"**{len(sessions)}** user(s) currently running Vyron",
+        color=0x00CC66
+    )
+
+    for i, s in enumerate(sessions[:10], 1):
+        owner_uid = s.get("owner_uid")
+        if owner_uid:
+            member = interaction.guild.get_member(int(owner_uid))
+            owner_str = member.mention if member else f"<@{owner_uid}>"
+        else:
+            owner_str = "Unknown"
+
+        last_seen = s.get("last_seen", 0)
+        ago = now - last_seen
+        if ago < 60:
+            seen_str = f"{ago}s ago"
+        else:
+            seen_str = f"{ago // 60}m ago"
+
+        key_display = s["key"][:20] + "..." if len(s["key"]) > 20 else s["key"]
+
+        embed.add_field(
+            name=f"#{i} — {owner_str}",
+            value=f"🔑 `{key_display}`\n⏳ Expires: {s.get('expiry', 'Unknown')}\n🕐 Last seen: {seen_str}",
+            inline=False
+        )
+
+    embed.set_footer(text="Vyron.cc • Click Kick # to remove a user")
+
+    view = SessionsView(sessions)
+    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+
 @client.event
 async def on_ready():
     start_api_thread()
