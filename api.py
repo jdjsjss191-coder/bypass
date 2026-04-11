@@ -73,6 +73,9 @@ def check_key():
         if key in keys and uid in data.get("blacklist", {}):
             return jsonify({"valid": False, "reason": "Blacklisted: " + data["blacklist"][uid]}), 200
 
+    # determine key type (external keys are prefixed with "VyronExt-")
+    key_type = "external" if key.startswith("VyronExt-") else "script"
+
     # hwid check
     key_hwid = data.setdefault("key_hwid", {})
     if key not in key_hwid:
