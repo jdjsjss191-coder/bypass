@@ -9,9 +9,7 @@ import asyncio
 from typing import Optional
 from api import start_api_thread
 
-print("Bot starting...", flush=True)
 TOKEN = os.environ["TOKEN"]
-print(f"Token loaded, length: {len(TOKEN)}", flush=True)
 ANNOUNCE_CHANNEL_ID = int(os.environ.get("ANNOUNCE_CHANNEL", "0"))
 OWNER_ROLE_NAME = os.environ.get("OWNER_ROLE", "Owner")
 
