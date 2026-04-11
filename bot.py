@@ -1166,7 +1166,6 @@ async def customkey(interaction: discord.Interaction, user: discord.Member, key:
         description=f"{interaction.user.mention} created a custom key for {user.mention}.",
         color=0x5080FF
     )
-    pub_embed.add_field(name="Key", value=f"```{key}```", inline=False)
     pub_embed.add_field(name="Duration", value=duration_label(secs), inline=True)
     if expiry:
         pub_embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=True)
