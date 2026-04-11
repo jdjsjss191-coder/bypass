@@ -853,6 +853,256 @@ async def revokekey(interaction: discord.Interaction, key: str):
     )
 
 
+# ─────────────────────────────────────────────
+#  MODERATION COMMANDS
+# ─────────────────────────────────────────────
+
+@tree.command(name="kick", description="Kick a user from the server")
+@app_commands.describe(user="The user to kick", reason="Reason for the kick")
+async def kick(interaction: discord.Interaction, user: discord.Member, reason: str = "No reason provided"):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    if user.top_role >= interaction.guild.me.top_role:
+        await interaction.response.send_message("❌ I can't kick that user — their role is too high.", ephemeral=True)
+        return
+    dm_embed = discord.Embed(
+        title="👢 You have been kicked",
+        description=f"You were kicked from **{interaction.guild.name}**.",
+        color=0xFF6600
+    )
+    dm_embed.add_field(name="Reason", value=reason, inline=False)
+    dm_embed.set_footer(text="Vyron.cc")
+    try:
+        await user.send(embed=dm_embed)
+    except discord.Forbidden:
+        pass
+    await user.kick(reason=reason)
+    pub_embed = discord.Embed(
+        title="👢 User Kicked",
+        description=f"{user.mention} has been kicked.",
+        color=0xFF6600
+    )
+    pub_embed.add_field(name="Reason", value=reason, inline=False)
+    pub_embed.add_field(name="Kicked by", value=interaction.user.mention, inline=True)
+    pub_embed.set_footer(text="Vyron.cc")
+    await interaction.response.send_message(embed=pub_embed)
+
+
+@tree.command(name="ban", description="Ban a user from the server")
+@app_commands.describe(user="The user to ban", reason="Reason for the ban", delete_days="Days of messages to delete (0-7)")
+async def ban(interaction: discord.Interaction, user: discord.Member, reason: str = "No reason provided", delete_days: int = 0):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    if user.top_role >= interaction.guild.me.top_role:
+        await interaction.response.send_message("❌ I can't ban that user — their role is too high.", ephemeral=True)
+        return
+    delete_days = max(0, min(7, delete_days))
+    dm_embed = discord.Embed(
+        title="🔨 You have been banned",
+        description=f"You were banned from **{interaction.guild.name}**.",
+        color=0xFF0000
+    )
+    dm_embed.add_field(name="Reason", value=reason, inline=False)
+    dm_embed.set_footer(text="Vyron.cc")
+    try:
+        await user.send(embed=dm_embed)
+    except discord.Forbidden:
+        pass
+    await user.ban(reason=reason, delete_message_days=delete_days)
+    pub_embed = discord.Embed(
+        title="🔨 User Banned",
+        description=f"{user.mention} has been banned.",
+        color=0xFF0000
+    )
+    pub_embed.add_field(name="Reason", value=reason, inline=False)
+    pub_embed.add_field(name="Banned by", value=interaction.user.mention, inline=True)
+    pub_embed.set_footer(text="Vyron.cc")
+    await interaction.response.send_message(embed=pub_embed)
+
+
+@tree.command(name="unban", description="Unban a user by their ID")
+@app_commands.describe(user_id="The user ID to unban", reason="Reason for the unban")
+async def unban(interaction: discord.Interaction, user_id: str, reason: str = "No reason provided"):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    try:
+        uid = int(user_id)
+    except ValueError:
+        await interaction.response.send_message("❌ Invalid user ID.", ephemeral=True)
+        return
+    try:
+        await interaction.guild.unban(discord.Object(id=uid), reason=reason)
+        await interaction.response.send_message(f"✅ User `{user_id}` has been unbanned.", ephemeral=True)
+    except discord.NotFound:
+        await interaction.response.send_message("❌ That user is not banned.", ephemeral=True)
+
+
+@tree.command(name="mute", description="Timeout (mute) a user for a duration")
+@app_commands.describe(user="The user to mute", duration="Duration: e.g. 10m, 1h, 7d (max 28d)", reason="Reason for the mute")
+async def mute(interaction: discord.Interaction, user: discord.Member, duration: str, reason: str = "No reason provided"):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    if user.top_role >= interaction.guild.me.top_role:
+        await interaction.response.send_message("❌ I can't mute that user — their role is too high.", ephemeral=True)
+        return
+    secs = parse_duration(duration)
+    if not secs:
+        await interaction.response.send_message("❌ Invalid duration. Use e.g. `10m`, `1h`, `7d`. Max is 28 days.", ephemeral=True)
+        return
+    secs = min(secs, 28 * 86400)  # Discord max timeout is 28 days
+    import datetime
+    until = discord.utils.utcnow() + datetime.timedelta(seconds=secs)
+    await user.timeout(until, reason=reason)
+    dm_embed = discord.Embed(
+        title="🔇 You have been muted",
+        description=f"You were timed out in **{interaction.guild.name}**.",
+        color=0xAAAAAA
+    )
+    dm_embed.add_field(name="Duration", value=duration_label(secs), inline=True)
+    dm_embed.add_field(name="Reason", value=reason, inline=False)
+    dm_embed.set_footer(text="Vyron.cc")
+    try:
+        await user.send(embed=dm_embed)
+    except discord.Forbidden:
+        pass
+    pub_embed = discord.Embed(
+        title="🔇 User Muted",
+        description=f"{user.mention} has been timed out.",
+        color=0xAAAAAA
+    )
+    pub_embed.add_field(name="Duration", value=duration_label(secs), inline=True)
+    pub_embed.add_field(name="Expires", value=f"<t:{int(until.timestamp())}:R>", inline=True)
+    pub_embed.add_field(name="Reason", value=reason, inline=False)
+    pub_embed.add_field(name="Muted by", value=interaction.user.mention, inline=True)
+    pub_embed.set_footer(text="Vyron.cc")
+    await interaction.response.send_message(embed=pub_embed)
+
+
+@tree.command(name="unmute", description="Remove a timeout from a user")
+@app_commands.describe(user="The user to unmute")
+async def unmute(interaction: discord.Interaction, user: discord.Member):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    await user.timeout(None)
+    await interaction.response.send_message(f"✅ {user.mention} has been unmuted.")
+
+
+@tree.command(name="lock", description="Lock a channel so only staff can send messages")
+@app_commands.describe(channel="Channel to lock (defaults to current channel)", reason="Reason for locking")
+async def lock(interaction: discord.Interaction, channel: discord.TextChannel = None, reason: str = "No reason provided"):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    target = channel or interaction.channel
+    overwrite = target.overwrites_for(interaction.guild.default_role)
+    overwrite.send_messages = False
+    await target.set_permissions(interaction.guild.default_role, overwrite=overwrite, reason=reason)
+    embed = discord.Embed(
+        title="🔒 Channel Locked",
+        description=f"{target.mention} has been locked.",
+        color=0xFF4444
+    )
+    embed.add_field(name="Reason", value=reason, inline=False)
+    embed.add_field(name="Locked by", value=interaction.user.mention, inline=True)
+    embed.set_footer(text="Vyron.cc")
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="unlock", description="Unlock a channel")
+@app_commands.describe(channel="Channel to unlock (defaults to current channel)")
+async def unlock(interaction: discord.Interaction, channel: discord.TextChannel = None):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    target = channel or interaction.channel
+    overwrite = target.overwrites_for(interaction.guild.default_role)
+    overwrite.send_messages = None  # Reset to default
+    await target.set_permissions(interaction.guild.default_role, overwrite=overwrite)
+    embed = discord.Embed(
+        title="🔓 Channel Unlocked",
+        description=f"{target.mention} has been unlocked.",
+        color=0x00CC66
+    )
+    embed.add_field(name="Unlocked by", value=interaction.user.mention, inline=True)
+    embed.set_footer(text="Vyron.cc")
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="userinfo", description="Show detailed info about a user")
+@app_commands.describe(user="The user to look up")
+async def userinfo(interaction: discord.Interaction, user: discord.Member = None):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    user = user or interaction.user
+    data = load_data()
+    uid = str(user.id)
+    now = int(time.time())
+
+    perm_keys = data.get("keys", {}).get(uid, [])
+    temp_keys = [t for t in data.get("temp_keys", {}).get(uid, []) if t["expiry"] > now]
+    warns = data.get("warnings", {}).get(uid, [])
+    blacklisted = uid in data.get("blacklist", {})
+    blacklist_reason = data["blacklist"].get(uid, "") if blacklisted else ""
+
+    roles = [r.mention for r in reversed(user.roles) if r.name != "@everyone"]
+    roles_str = " ".join(roles) if roles else "None"
+
+    status_str = "🚫 Blacklisted" if blacklisted else "✅ Active"
+
+    embed = discord.Embed(
+        title=f"👤 {user.display_name}",
+        color=0xFF4444 if blacklisted else 0x5080FF
+    )
+    embed.set_thumbnail(url=user.display_avatar.url)
+    embed.add_field(name="Username", value=str(user), inline=True)
+    embed.add_field(name="ID", value=str(user.id), inline=True)
+    embed.add_field(name="Status", value=status_str, inline=True)
+    embed.add_field(name="Joined Server", value=f"<t:{int(user.joined_at.timestamp())}:R>", inline=True)
+    embed.add_field(name="Account Created", value=f"<t:{int(user.created_at.timestamp())}:R>", inline=True)
+    embed.add_field(name="Permanent Keys", value=str(len(perm_keys)), inline=True)
+    embed.add_field(name="Active Temp Keys", value=str(len(temp_keys)), inline=True)
+    embed.add_field(name="Warnings", value=str(len(warns)), inline=True)
+    if blacklisted:
+        embed.add_field(name="Blacklist Reason", value=blacklist_reason, inline=False)
+    if roles:
+        embed.add_field(name=f"Roles ({len(roles)})", value=roles_str[:1024], inline=False)
+    embed.set_footer(text="Vyron.cc")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@tree.command(name="wipekeys", description="Delete all keys for a user")
+@app_commands.describe(user="The user whose keys to wipe")
+async def wipekeys(interaction: discord.Interaction, user: discord.Member):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    data = load_data()
+    uid = str(user.id)
+    keys = data.get("keys", {}).get(uid, [])
+    if not keys:
+        await interaction.response.send_message(f"{user.mention} has no keys to wipe.", ephemeral=True)
+        return
+    # Clean up all related data for each key
+    for key in keys:
+        data.get("key_expiry", {}).pop(key, None)
+        data.get("key_hwid", {}).pop(key, None)
+        data.get("key_created", {}).pop(key, None)
+    count = len(keys)
+    data["keys"][uid] = []
+    save_data(data)
+    dm_embed = discord.Embed(
+        title="🔑 Keys Wiped",
+        description=f"All your Vyron V2 keys have been revoked.",
+        color=0xFF4444
+    )
+    dm_embed.set_footer(text="Vyron.cc")
+    try:
+        await user.send(embed=dm_embed)
+    except discord.Forbidden:
+        pass
+    await interaction.response.send_message(
+        f"✅ Wiped **{count}** key(s) from {user.mention}.",
+        ephemeral=True
+    )
+
+
 @client.event
 async def on_ready():
     start_api_thread()
