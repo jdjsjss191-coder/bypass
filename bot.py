@@ -23,7 +23,13 @@ def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
             return json.load(f)
-    return {"keys": {}, "blacklist": {}, "temp_keys": {}}
+    return {
+        "keys": {},
+        "keys_internal": {},
+        "blacklist": {},
+        "temp_keys": {},
+        "temp_keys_internal": {},
+    }
 
 def save_data(data):
     with open(DATA_FILE, "w") as f:
@@ -36,6 +42,11 @@ def gen_key():
 def gen_ext_key():
     chars = string.ascii_letters + string.digits
     return "VyronExt-" + "".join(random.choices(chars, k=15))
+
+
+def gen_int_key():
+    chars = string.ascii_letters + string.digits
+    return "VyronInt-" + "".join(random.choices(chars, k=15))
 
 def has_owner_role(interaction: discord.Interaction) -> bool:
     return any(r.name == OWNER_ROLE_NAME for r in interaction.user.roles)
@@ -464,17 +475,20 @@ async def checkkeys(interaction: discord.Interaction, user: discord.Member):
         return await deny(interaction)
     data = load_data()
     uid = str(user.id)
-    keys = data["keys"].get(uid, [])
+    keys = data.get("keys", {}).get(uid, [])
+    int_keys = data.get("keys_internal", {}).get(uid, [])
     temp_keys = [t for t in data.get("temp_keys", {}).get(uid, []) if t["expiry"] > int(time.time())]
     blacklisted = uid in data["blacklist"]
-    if not keys and not temp_keys:
+    if not keys and not int_keys and not temp_keys:
         await interaction.response.send_message(f"No keys found for {user.mention}.", ephemeral=True)
         return
     status = f"🚫 Blacklisted: {data['blacklist'][uid]}" if blacklisted else "✅ Active"
     embed = discord.Embed(title=f"Keys for {user.display_name}", color=0xFF4444 if blacklisted else 0x5080FF)
     embed.add_field(name="Status", value=status, inline=False)
     if keys:
-        embed.add_field(name=f"Permanent Keys ({len(keys)})", value="```" + "\n".join(f"• {k}" for k in keys) + "```", inline=False)
+        embed.add_field(name=f"Script Keys ({len(keys)})", value="```" + "\n".join(f"• {k}" for k in keys) + "```", inline=False)
+    if int_keys:
+        embed.add_field(name=f"Internal Keys ({len(int_keys)})", value="```" + "\n".join(f"• {k}" for k in int_keys) + "```", inline=False)
     if temp_keys:
         tlist = "\n".join(f"• {t['key']} (expires <t:{t['expiry']}:R>)" for t in temp_keys)
         embed.add_field(name=f"Active Temp Keys ({len(temp_keys)})", value=tlist, inline=False)
@@ -643,6 +657,7 @@ async def stats(interaction: discord.Interaction):
     now = int(time.time())
 
     total_keys = sum(len(v) for v in data.get("keys", {}).values())
+    total_keys_int = sum(len(v) for v in data.get("keys_internal", {}).values())
     total_temp = sum(
         sum(1 for t in tkeys if t["expiry"] > now)
         for tkeys in data.get("temp_keys", {}).values()
@@ -661,7 +676,8 @@ async def stats(interaction: discord.Interaction):
 
     embed = discord.Embed(title="📊 Vyron.cc Stats", color=0x5080FF)
     embed.add_field(name="Server Members", value=str(total_members), inline=True)
-    embed.add_field(name="Permanent Keys Issued", value=str(total_keys), inline=True)
+    embed.add_field(name="Script Keys Issued", value=str(total_keys), inline=True)
+    embed.add_field(name="Internal Keys Issued", value=str(total_keys_int), inline=True)
     embed.add_field(name="Active Temp Keys", value=str(total_temp), inline=True)
     embed.add_field(name="Expired Keys", value=str(expired), inline=True)
     embed.add_field(name="Blacklisted Users", value=str(total_blacklisted), inline=True)
@@ -729,6 +745,11 @@ async def keyinfo(interaction: discord.Interaction, key: str):
         if key in keys:
             owner_uid = uid
             break
+    if not owner_uid:
+        for uid, keys in data.get("keys_internal", {}).items():
+            if key in keys:
+                owner_uid = uid
+                break
 
     if not owner_uid:
         await interaction.response.send_message("❌ Key not found.", ephemeral=True)
@@ -782,6 +803,8 @@ async def extendkey(interaction: discord.Interaction, key: str, duration: str):
     # Check key exists
     found = any(key in keys for keys in data.get("keys", {}).values())
     if not found:
+        found = any(key in keys for keys in data.get("keys_internal", {}).values())
+    if not found:
         await interaction.response.send_message("❌ Key not found.", ephemeral=True)
         return
 
@@ -823,6 +846,13 @@ async def revokekey(interaction: discord.Interaction, key: str):
             owner_uid = uid
             keys.remove(key)
             break
+    if not owner_uid:
+        ki = data.setdefault("keys_internal", {})
+        for uid, keys in list(ki.items()):
+            if key in keys:
+                owner_uid = uid
+                keys.remove(key)
+                break
 
     if not owner_uid:
         await interaction.response.send_message("❌ Key not found.", ephemeral=True)
@@ -1041,6 +1071,7 @@ async def userinfo(interaction: discord.Interaction, user: discord.Member = None
     now = int(time.time())
 
     perm_keys = data.get("keys", {}).get(uid, [])
+    int_keys_ct = len(data.get("keys_internal", {}).get(uid, []))
     temp_keys = [t for t in data.get("temp_keys", {}).get(uid, []) if t["expiry"] > now]
     warns = data.get("warnings", {}).get(uid, [])
     blacklisted = uid in data.get("blacklist", {})
@@ -1061,7 +1092,8 @@ async def userinfo(interaction: discord.Interaction, user: discord.Member = None
     embed.add_field(name="Status", value=status_str, inline=True)
     embed.add_field(name="Joined Server", value=f"<t:{int(user.joined_at.timestamp())}:R>", inline=True)
     embed.add_field(name="Account Created", value=f"<t:{int(user.created_at.timestamp())}:R>", inline=True)
-    embed.add_field(name="Permanent Keys", value=str(len(perm_keys)), inline=True)
+    embed.add_field(name="Script Keys", value=str(len(perm_keys)), inline=True)
+    embed.add_field(name="Internal Keys", value=str(int_keys_ct), inline=True)
     embed.add_field(name="Active Temp Keys", value=str(len(temp_keys)), inline=True)
     embed.add_field(name="Warnings", value=str(len(warns)), inline=True)
     if blacklisted:
@@ -1079,17 +1111,19 @@ async def wipekeys(interaction: discord.Interaction, user: discord.Member):
         return await deny(interaction)
     data = load_data()
     uid = str(user.id)
-    keys = data.get("keys", {}).get(uid, [])
-    if not keys:
+    keys = list(data.get("keys", {}).get(uid, []))
+    int_keys = list(data.get("keys_internal", {}).get(uid, []))
+    if not keys and not int_keys:
         await interaction.response.send_message(f"{user.mention} has no keys to wipe.", ephemeral=True)
         return
     # Clean up all related data for each key
-    for key in keys:
+    for key in keys + int_keys:
         data.get("key_expiry", {}).pop(key, None)
         data.get("key_hwid", {}).pop(key, None)
         data.get("key_created", {}).pop(key, None)
-    count = len(keys)
-    data["keys"][uid] = []
+    count = len(keys) + len(int_keys)
+    data.setdefault("keys", {})[uid] = []
+    data.setdefault("keys_internal", {})[uid] = []
     save_data(data)
     dm_embed = discord.Embed(
         title="🔑 Keys Wiped",
@@ -1141,6 +1175,8 @@ async def customkey(interaction: discord.Interaction, user: discord.Member, key:
     # Check if key already exists anywhere
     all_existing = set()
     for keys in data.get("keys", {}).values():
+        all_existing.update(keys)
+    for keys in data.get("keys_internal", {}).values():
         all_existing.update(keys)
     for tkeys in data.get("temp_keys", {}).values():
         for t in tkeys:
@@ -1334,6 +1370,8 @@ class RedeemKeyModal(discord.ui.Modal, title="Redeem Your Key"):
         # Collect all valid permanent keys
         all_perm_keys = set()
         for keys in data.get("keys", {}).values():
+            all_perm_keys.update(keys)
+        for keys in data.get("keys_internal", {}).values():
             all_perm_keys.update(keys)
 
         # Collect valid temp keys
@@ -1652,6 +1690,9 @@ async def checkexecutions(interaction: discord.Interaction):
     for uid, keys in data.get("keys", {}).items():
         for key in keys:
             all_keys[key] = uid
+    for uid, keys in data.get("keys_internal", {}).items():
+        for key in keys:
+            all_keys[key] = uid
 
     if not all_keys:
         await interaction.response.send_message("No keys have been generated yet.", ephemeral=True)
@@ -1719,7 +1760,7 @@ async def expiry_check_loop():
                 notified_set = set(notified)
                 changed = False
 
-                for uid, keys in data.get("keys", {}).items():
+                for uid, keys in list(data.get("keys", {}).items()) + list(data.get("keys_internal", {}).items()):
                     for key in keys:
                         expiry = key_expiry.get(key)
                         if expiry is None:
@@ -1984,10 +2025,17 @@ async def transferkey(interaction: discord.Interaction, key: str, new_user: disc
 
     # Find current owner
     old_uid = None
+    pool = "keys"
     for uid, keys in data.get("keys", {}).items():
         if key in keys:
             old_uid = uid
             break
+    if not old_uid:
+        for uid, keys in data.get("keys_internal", {}).items():
+            if key in keys:
+                old_uid = uid
+                pool = "keys_internal"
+                break
 
     if not old_uid:
         await interaction.response.send_message("❌ Key not found.", ephemeral=True)
@@ -1996,7 +2044,7 @@ async def transferkey(interaction: discord.Interaction, key: str, new_user: disc
     new_uid = str(new_user.id)
 
     # Check new user doesn't already have it
-    if key in data.get("keys", {}).get(new_uid, []):
+    if key in data.get("keys", {}).get(new_uid, []) or key in data.get("keys_internal", {}).get(new_uid, []):
         await interaction.response.send_message(
             f"❌ {new_user.mention} already has that key.", ephemeral=True
         )
@@ -2007,9 +2055,9 @@ async def transferkey(interaction: discord.Interaction, key: str, new_user: disc
 
     if mode == "move":
         # Remove from old user
-        data["keys"][old_uid].remove(key)
-        # Add to new user
-        data["keys"].setdefault(new_uid, []).append(key)
+        pk = data.setdefault(pool, {})
+        pk[old_uid].remove(key)
+        pk.setdefault(new_uid, []).append(key)
         save_data(data)
 
         # DM old user
@@ -2049,7 +2097,7 @@ async def transferkey(interaction: discord.Interaction, key: str, new_user: disc
 
     else:  # copy
         # Keep on old user, add to new user
-        data["keys"].setdefault(new_uid, []).append(key)
+        data.setdefault(pool, {}).setdefault(new_uid, []).append(key)
         save_data(data)
 
         # DM new user
@@ -2080,63 +2128,63 @@ async def transferkey(interaction: discord.Interaction, key: str, new_user: disc
 
 
 # ─────────────────────────────────────────────
-#  EXTERNAL KEY COMMANDS
+#  INTERNAL KEY COMMANDS (C++ loader / edition=int — uses keys_internal, prefix VyronInt-)
 # ─────────────────────────────────────────────
 
-@tree.command(name="genextkey", description="Generate a Vyron External key for yourself")
+@tree.command(name="genintkey", description="Generate a Vyron Internal key for yourself (C++ loader)")
 @app_commands.describe(duration="Duration: e.g. 1h, 7d, 2w, 1m, lifetime")
-async def genextkey(interaction: discord.Interaction, duration: str = "lifetime"):
+async def genintkey(interaction: discord.Interaction, duration: str = "lifetime"):
     if not has_owner_role(interaction):
         return await deny(interaction)
     secs = parse_duration(duration)
     if secs == 0:
         await interaction.response.send_message("❌ Invalid duration.", ephemeral=True)
         return
-    key = gen_ext_key()
+    key = gen_int_key()
     data = load_data()
     uid = str(interaction.user.id)
     expiry = int(time.time()) + secs if secs else None
     data.setdefault("key_expiry", {})[key] = expiry
     data.setdefault("key_created", {})[key] = int(time.time())
-    data["keys"].setdefault(uid, []).append(key)
+    data.setdefault("keys_internal", {}).setdefault(uid, []).append(key)
     save_data(data)
-    embed = discord.Embed(title="🖥️ Vyron External Key", description=f"```{key}```", color=0x00AAFF)
+    embed = discord.Embed(title="Vyron Internal Key", description=f"```{key}```", color=0x00AAFF)
     embed.add_field(name="Duration", value=duration_label(secs), inline=True)
     if expiry:
         embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=True)
-    embed.set_footer(text="Vyron.cc • External")
+    embed.set_footer(text="Vyron.cc • Internal (loader)")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@tree.command(name="genextkeyto", description="Generate a Vyron External key and DM it to a user")
+@tree.command(name="genintkeyto", description="Generate a Vyron Internal key and DM it to a user")
 @app_commands.describe(user="The user to send the key to", duration="Duration: e.g. 1h, 7d, 2w, 1m, lifetime")
-async def genextkeyto(interaction: discord.Interaction, user: discord.Member, duration: str = "lifetime"):
+async def genintkeyto(interaction: discord.Interaction, user: discord.Member, duration: str = "lifetime"):
     if not has_owner_role(interaction):
         return await deny(interaction)
     secs = parse_duration(duration)
     if secs == 0:
         await interaction.response.send_message("❌ Invalid duration.", ephemeral=True)
         return
-    key = gen_ext_key()
+    key = gen_int_key()
     data = load_data()
     uid = str(user.id)
     expiry = int(time.time()) + secs if secs else None
     data.setdefault("key_expiry", {})[key] = expiry
     data.setdefault("key_created", {})[key] = int(time.time())
-    data["keys"].setdefault(uid, []).append(key)
+    data.setdefault("keys_internal", {}).setdefault(uid, []).append(key)
     save_data(data)
-    dm_embed = discord.Embed(title="🖥️ Vyron External Key", description=f"```{key}```", color=0x00AAFF)
+    dm_embed = discord.Embed(title="Vyron Internal Key", description=f"```{key}```", color=0x00AAFF)
     dm_embed.add_field(name="Duration", value=duration_label(secs), inline=True)
     if expiry:
         dm_embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=True)
-    dm_embed.set_footer(text="Vyron.cc • External")
+    dm_embed.set_footer(text="Vyron.cc • Internal (loader)")
     pub_embed = discord.Embed(
-        title="🖥️ External Key Sent",
-        description=f"{interaction.user.mention} sent a Vyron External key to {user.mention}.",
+        title="Internal Key Sent",
+        description=f"{interaction.user.mention} sent a Vyron Internal key to {user.mention}.",
         color=0x00AAFF
     )
     pub_embed.add_field(name="Duration", value=duration_label(secs), inline=True)
-    pub_embed.set_footer(text="Vyron.cc • External")
+    pub_embed.set_footer(text="Vyron.cc • Internal")
     try:
         await user.send(embed=dm_embed)
         await interaction.response.send_message(embed=pub_embed)
@@ -2144,49 +2192,49 @@ async def genextkeyto(interaction: discord.Interaction, user: discord.Member, du
         await interaction.response.send_message(f"Couldn't DM {user.mention} — they may have DMs disabled.")
 
 
-@tree.command(name="addexternalpanel", description="Post the Vyron External key panel in this channel")
-async def addexternalpanel(interaction: discord.Interaction):
+@tree.command(name="addinternalpanel", description="Post the Vyron Internal key panel in this channel")
+async def addinternalpanel(interaction: discord.Interaction):
     if not has_owner_role(interaction):
         return await deny(interaction)
 
     embed = discord.Embed(
-        title="🖥️ Vyron External Panel",
+        title="Vyron Internal Panel",
         description=(
-            "If you have a Vyron External key, use the buttons below to manage it.\n\n"
+            "If you have a Vyron Internal key (C++ loader), use the buttons below.\n\n"
             "Your key is bound to your **HWID** on first use.\n"
             "Use **Reset HWID** if you changed your PC (24h cooldown)."
         ),
         color=0x00AAFF
     )
-    embed.set_footer(text=f"Sent by {interaction.user} • Vyron.cc External")
+    embed.set_footer(text=f"Sent by {interaction.user} • Vyron.cc Internal")
 
-    view = ExternalPanelView()
+    view = InternalPanelView()
     await interaction.channel.send(embed=embed, view=view)
-    await interaction.response.send_message("✅ External panel posted.", ephemeral=True)
+    await interaction.response.send_message("✅ Internal panel posted.", ephemeral=True)
 
 
-class ExternalPanelView(discord.ui.View):
+class InternalPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="🔑 Redeem Key", style=discord.ButtonStyle.success, custom_id="ext_panel_redeem")
+    @discord.ui.button(label="Redeem Key", style=discord.ButtonStyle.success, custom_id="int_panel_redeem")
     async def redeem_key(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(ExternalRedeemModal())
+        await interaction.response.send_modal(InternalRedeemModal())
 
-    @discord.ui.button(label="⚙️ Reset HWID", style=discord.ButtonStyle.secondary, custom_id="ext_panel_resethwid")
+    @discord.ui.button(label="Reset HWID", style=discord.ButtonStyle.secondary, custom_id="int_panel_resethwid")
     async def reset_hwid(self, interaction: discord.Interaction, button: discord.ui.Button):
         data = load_data()
         uid = str(interaction.user.id)
         now = int(time.time())
 
-        redeemed = data.get("ext_redeemed_keys", {}).get(uid)
+        redeemed = data.get("int_redeemed_keys", {}).get(uid)
         if not redeemed:
-            await interaction.response.send_message("❌ You haven't redeemed an external key yet.", ephemeral=True)
+            await interaction.response.send_message("❌ You haven't redeemed an internal key yet.", ephemeral=True)
             return
 
         key = redeemed["key"]
         cooldowns = data.setdefault("hwid_reset_cooldown", {})
-        last_reset = cooldowns.get(uid + "_ext", 0)
+        last_reset = cooldowns.get(uid + "_int", 0)
         if now - last_reset < 86400:
             next_reset = last_reset + 86400
             await interaction.response.send_message(
@@ -2195,20 +2243,20 @@ class ExternalPanelView(discord.ui.View):
 
         key_hwid = data.setdefault("key_hwid", {})
         key_hwid.pop(key, None)
-        cooldowns[uid + "_ext"] = now
+        cooldowns[uid + "_int"] = now
         save_data(data)
         await interaction.response.send_message(
             "✅ HWID reset. Next launch will bind to your new machine.", ephemeral=True)
 
-    @discord.ui.button(label="📊 Key Info", style=discord.ButtonStyle.primary, custom_id="ext_panel_info")
+    @discord.ui.button(label="Key Info", style=discord.ButtonStyle.primary, custom_id="int_panel_info")
     async def key_info(self, interaction: discord.Interaction, button: discord.ui.Button):
         data = load_data()
         uid = str(interaction.user.id)
         now = int(time.time())
 
-        redeemed = data.get("ext_redeemed_keys", {}).get(uid)
+        redeemed = data.get("int_redeemed_keys", {}).get(uid)
         if not redeemed:
-            await interaction.response.send_message("❌ You haven't redeemed an external key yet.", ephemeral=True)
+            await interaction.response.send_message("❌ You haven't redeemed an internal key yet.", ephemeral=True)
             return
 
         key = redeemed["key"]
@@ -2226,24 +2274,24 @@ class ExternalPanelView(discord.ui.View):
             expiry_str = f"<t:{expiry}:R>"
             status = "✅ Active"
 
-        last_reset = data.get("hwid_reset_cooldown", {}).get(uid + "_ext", 0)
+        last_reset = data.get("hwid_reset_cooldown", {}).get(uid + "_int", 0)
         hwid_reset_str = f"<t:{last_reset + 86400}:R>" if last_reset and now - last_reset < 86400 else "Available now"
 
-        embed = discord.Embed(title="🖥️ External Key Info", color=0x00AAFF)
+        embed = discord.Embed(title="Vyron Internal Key Info", color=0x00AAFF)
         embed.add_field(name="Key", value=f"```{key}```", inline=False)
         embed.add_field(name="Status", value=status, inline=True)
         embed.add_field(name="Expires", value=expiry_str, inline=True)
         embed.add_field(name="Redeemed", value=f"<t:{redeemed_at}:R>" if redeemed_at else "Unknown", inline=True)
         embed.add_field(name="HWID Bound", value="Yes" if hwid != "Not bound yet" else "No", inline=True)
         embed.add_field(name="Next HWID Reset", value=hwid_reset_str, inline=True)
-        embed.set_footer(text="Vyron.cc • External")
+        embed.set_footer(text="Vyron.cc • Internal")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-class ExternalRedeemModal(discord.ui.Modal, title="Redeem External Key"):
+class InternalRedeemModal(discord.ui.Modal, title="Redeem Internal Key"):
     key_input = discord.ui.TextInput(
-        label="Enter your external key",
-        placeholder="VyronExt-XXXXXXXXXXXXXXX",
+        label="Enter your internal key",
+        placeholder="VyronInt-XXXXXXXXXXXXXXX",
         min_length=4,
         max_length=64,
         required=True
@@ -2255,14 +2303,14 @@ class ExternalRedeemModal(discord.ui.Modal, title="Redeem External Key"):
         uid = str(interaction.user.id)
         now = int(time.time())
 
-        if not key.startswith("VyronExt-"):
+        if not key.startswith("VyronInt-"):
             await interaction.response.send_message(
-                "❌ That doesn't look like an external key. External keys start with `VyronExt-`.",
+                "❌ Internal keys start with `VyronInt-`.",
                 ephemeral=True)
             return
 
         all_perm_keys = set()
-        for keys in data.get("keys", {}).values():
+        for keys in data.get("keys_internal", {}).values():
             all_perm_keys.update(keys)
 
         if key not in all_perm_keys:
@@ -2274,8 +2322,8 @@ class ExternalRedeemModal(discord.ui.Modal, title="Redeem External Key"):
             await interaction.response.send_message("❌ That key has expired.", ephemeral=True)
             return
 
-        ext_redeemed = data.setdefault("ext_redeemed_keys", {})
-        for existing_uid, r in ext_redeemed.items():
+        int_redeemed = data.setdefault("int_redeemed_keys", {})
+        for existing_uid, r in int_redeemed.items():
             if r["key"] == key and existing_uid != uid:
                 await interaction.response.send_message(
                     "❌ That key has already been redeemed by another user.", ephemeral=True)
@@ -2285,18 +2333,18 @@ class ExternalRedeemModal(discord.ui.Modal, title="Redeem External Key"):
             await interaction.response.send_message("❌ You are blacklisted.", ephemeral=True)
             return
 
-        ext_redeemed[uid] = {"key": key, "redeemed_at": now}
+        int_redeemed[uid] = {"key": key, "redeemed_at": now}
         save_data(data)
 
         expiry_str = f"<t:{expiry}:R>" if expiry else "Lifetime"
         embed = discord.Embed(
-            title="✅ External Key Redeemed!",
-            description="Your key is ready. Launch the external and enter it when prompted.",
+            title="✅ Internal Key Redeemed",
+            description="Your key is ready. Run the loader and enter it when prompted.",
             color=0x00CC66
         )
         embed.add_field(name="Key", value=f"```{key}```", inline=False)
         embed.add_field(name="Expires", value=expiry_str, inline=True)
-        embed.set_footer(text="Vyron.cc • External")
+        embed.set_footer(text="Vyron.cc • Internal")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -2307,7 +2355,7 @@ async def on_ready():
     client.add_view(KeyPanelView())
     client.add_view(TicketSelectView())
     client.add_view(CloseTicketView())
-    client.add_view(ExternalPanelView())
+    client.add_view(InternalPanelView())
     # Start background expiry check loop
     asyncio.create_task(expiry_check_loop())
     await tree.sync()
