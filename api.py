@@ -16,7 +16,7 @@ def add_cors(response):
 @app.route("/source", methods=["OPTIONS"])
 def options_handler():
     return "", 204
-app.secret_key = os.environ.get("FLASK_SECRET", secrets.token_hex(32))
+
 DATA_FILE = "data.json"
 API_SECRET = os.environ.get("API_SECRET", "vyron_secret")
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "vyron_admin")
@@ -73,7 +73,14 @@ def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
             return json.load(f)
-    return {"keys": {}, "blacklist": {}, "temp_keys": {}, "key_hwid": {}}
+    return {
+        "keys": {},
+        "keys_internal": {},
+        "blacklist": {},
+        "temp_keys": {},
+        "temp_keys_internal": {},
+        "key_hwid": {},
+    }
 
 def save_data(data):
     with open(DATA_FILE, "w") as f:
@@ -81,28 +88,46 @@ def save_data(data):
 
 @app.route("/check", methods=["GET", "POST"])
 def check_key():
+    edition = ""
     if request.method == "GET":
-        key  = request.args.get("key", "").strip()
+        key = request.args.get("key", "").strip()
         hwid = request.args.get("hwid", "").strip()
+        edition = (request.args.get("edition") or request.args.get("ed") or "").strip().lower()
     else:
         body = request.get_json(force=True) or {}
-        key  = body.get("key", "").strip()
+        key = body.get("key", "").strip()
         hwid = body.get("hwid", "").strip()
+        edition = str(body.get("edition") or body.get("ed") or "").strip().lower()
 
     if not key or not hwid:
         return jsonify({"valid": False, "reason": "Missing key or hwid"}), 400
 
     data = load_data()
 
-    # collect all valid keys
-    all_keys = set()
-    for keys in data.get("keys", {}).values():
-        all_keys.update(keys)
+    if not edition:
+        edition = "ext"
+    if edition in ("external", "ext", "e"):
+        edition = "ext"
+    elif edition in ("internal", "int", "i"):
+        edition = "int"
+    else:
+        edition = "ext"
 
-    for uid, tkeys in data.get("temp_keys", {}).items():
-        for t in tkeys:
-            if t["expiry"] > int(time.time()):
-                all_keys.add(t["key"])
+    all_keys = set()
+    if edition == "int":
+        for keys in data.get("keys_internal", {}).values():
+            all_keys.update(keys)
+        for uid, tkeys in data.get("temp_keys_internal", {}).items():
+            for t in tkeys:
+                if t.get("expiry", 0) > int(time.time()):
+                    all_keys.add(t["key"])
+    else:
+        for keys in data.get("keys", {}).values():
+            all_keys.update(keys)
+        for uid, tkeys in data.get("temp_keys", {}).items():
+            for t in tkeys:
+                if t.get("expiry", 0) > int(time.time()):
+                    all_keys.add(t["key"])
 
     if key not in all_keys:
         return jsonify({"valid": False, "reason": "Invalid key"}), 200
@@ -113,13 +138,19 @@ def check_key():
         if int(time.time()) > key_expiry[key]:
             return jsonify({"valid": False, "reason": "Key expired"}), 200
 
-    # check blacklist
-    for uid, keys in data.get("keys", {}).items():
-        if key in keys and uid in data.get("blacklist", {}):
-            return jsonify({"valid": False, "reason": "Blacklisted: " + data["blacklist"][uid]}), 200
+    # check blacklist (either pool)
+    for pool in (data.get("keys", {}), data.get("keys_internal", {})):
+        for uid, keys in pool.items():
+            if key in keys and uid in data.get("blacklist", {}):
+                return jsonify({"valid": False, "reason": "Blacklisted: " + data["blacklist"][uid]}), 200
 
-    # determine key type (external keys are prefixed with "VyronExt-")
-    key_type = "external" if key.startswith("VyronExt-") else "script"
+    # determine key type for analytics
+    if key.startswith("VyronInt-"):
+        key_type = "internal"
+    elif key.startswith("VyronExt-"):
+        key_type = "external"
+    else:
+        key_type = "script"
 
     # hwid check
     key_hwid = data.setdefault("key_hwid", {})
@@ -202,6 +233,11 @@ def get_sessions():
                 if key in keys:
                     owner_uid = uid
                     break
+            if owner_uid is None:
+                for uid, keys in data.get("keys_internal", {}).items():
+                    if key in keys:
+                        owner_uid = uid
+                        break
 
             expiry = data.get("key_expiry", {}).get(key)
             if expiry is None:
