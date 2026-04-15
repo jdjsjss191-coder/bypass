@@ -264,7 +264,66 @@ def get_sessions():
     return jsonify(result), 200
 
 
-@app.route("/kick", methods=["POST"])
+@app.route("/tamper", methods=["POST"])
+def report_tamper():
+    """Called by the script when tamper is detected. Notifies the Discord bot."""
+    body = request.get_json(force=True) or {}
+    key          = body.get("key", "unknown").strip()
+    hwid         = body.get("hwid", "unknown").strip()
+    roblox_user  = body.get("roblox_user", "unknown").strip()
+    tamper_type  = body.get("tamper_type", "unknown").strip()
+
+    # Store tamper report so the bot can pick it up
+    data = load_data()
+    data.setdefault("tamper_reports", []).append({
+        "key":         key,
+        "hwid":        hwid,
+        "roblox_user": roblox_user,
+        "tamper_type": tamper_type,
+        "at":          int(time.time()),
+    })
+    save_data(data)
+
+    # Find discord owner of this key
+    owner_uid = None
+    for uid, keys in data.get("keys", {}).items():
+        if key in keys:
+            owner_uid = uid
+            break
+    if owner_uid is None:
+        for uid, keys in data.get("keys_internal", {}).items():
+            if key in keys:
+                owner_uid = uid
+                break
+
+    # Queue a notification back to the script (optional kick)
+    with pending_kicks_lock:
+        pending_kicks[key] = "Tamper detected. You have been removed."
+
+    return jsonify({
+        "success": True,
+        "owner_uid": owner_uid,
+        "roblox_user": roblox_user,
+        "tamper_type": tamper_type,
+    }), 200
+
+
+@app.route("/tamper/pending", methods=["GET"])
+def get_pending_tampers():
+    """Called by the bot to fetch unprocessed tamper reports."""
+    secret = request.headers.get("X-Admin-Password", "")
+    if secret != DASHBOARD_PASSWORD:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    data = load_data()
+    reports = data.get("tamper_reports", [])
+    # Clear after reading
+    data["tamper_reports"] = []
+    save_data(data)
+    return jsonify(reports), 200
+
+
+
 def kick_session():
     """Queue a kick for a key. Called by the bot."""
     body = request.get_json(force=True) or {}
