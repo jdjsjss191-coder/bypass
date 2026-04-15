@@ -2086,6 +2086,187 @@ async def notifyspam(interaction: discord.Interaction, key: str, message: str, t
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
+# ─────────────────────────────────────────────
+#  MUSIC PANEL
+# ─────────────────────────────────────────────
+
+def _send_music_cmd(key: str, action: str, sound_id: str = "", loop: bool = False) -> bool:
+    """Helper: queue a music command via the API. Returns True on success."""
+    api_secret = os.environ.get("API_SECRET", "vyron_secret")
+    import urllib.request as _ur
+    try:
+        payload = json.dumps({
+            "key": key,
+            "action": action,
+            "sound_id": sound_id,
+            "loop": loop,
+            "secret": api_secret,
+        }).encode("utf-8")
+        req = _ur.Request(
+            f"{API_BASE}/music",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with _ur.urlopen(req, timeout=5) as resp:
+            result = json.loads(resp.read())
+        return result.get("success", False)
+    except Exception:
+        return False
+
+
+async def _fetch_sessions() -> list:
+    """Fetch active sessions from the API."""
+    import urllib.request as _ur
+    try:
+        req = _ur.Request(f"{API_BASE}/sessions", method="GET")
+        with _ur.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read())
+    except Exception:
+        return []
+
+
+class MusicPlayModal(discord.ui.Modal, title="Play Music"):
+    sound_input = discord.ui.TextInput(
+        label="Sound Asset ID",
+        placeholder="e.g. 1837843615",
+        required=True,
+        max_length=20,
+    )
+    key_input = discord.ui.TextInput(
+        label="Key (leave blank to broadcast to all)",
+        placeholder="Vyron-XXXXXXXXXXXXXXX  or  leave empty",
+        required=False,
+        max_length=64,
+    )
+
+    def __init__(self, loop: bool = False):
+        super().__init__()
+        self.loop = loop
+
+    async def on_submit(self, interaction: discord.Interaction):
+        sound_id = self.sound_input.value.strip()
+        key_val  = self.key_input.value.strip()
+
+        if not sound_id.isdigit():
+            await interaction.response.send_message("❌ Sound ID must be a number.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        if key_val:
+            # Single key
+            ok = _send_music_cmd(key_val, "play", sound_id, self.loop)
+            embed = discord.Embed(
+                title="🎵 Music Queued" if ok else "❌ Failed",
+                color=0x5080FF if ok else 0xFF4444,
+            )
+            embed.add_field(name="Key", value=f"`{key_val[:24]}{'...' if len(key_val) > 24 else ''}`", inline=True)
+            embed.add_field(name="Sound ID", value=f"`{sound_id}`", inline=True)
+            embed.add_field(name="Loop", value="✅ Yes" if self.loop else "❌ No", inline=True)
+            embed.set_footer(text="Vyron.cc • Will play within 15 seconds")
+        else:
+            # Broadcast to all active sessions
+            sessions = await _fetch_sessions()
+            if not sessions:
+                await interaction.followup.send("No active sessions to broadcast to.", ephemeral=True)
+                return
+            sent = sum(1 for s in sessions if _send_music_cmd(s["key"], "play", sound_id, self.loop))
+            embed = discord.Embed(
+                title="📡 Music Broadcast",
+                description=f"Queued for **{sent}/{len(sessions)}** active session(s).",
+                color=0x5080FF,
+            )
+            embed.add_field(name="Sound ID", value=f"`{sound_id}`", inline=True)
+            embed.add_field(name="Loop", value="✅ Yes" if self.loop else "❌ No", inline=True)
+            embed.set_footer(text="Vyron.cc • Will play within 15 seconds")
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+class MusicStopModal(discord.ui.Modal, title="Stop Music"):
+    key_input = discord.ui.TextInput(
+        label="Key (leave blank to stop for everyone)",
+        placeholder="Vyron-XXXXXXXXXXXXXXX  or  leave empty",
+        required=False,
+        max_length=64,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        key_val = self.key_input.value.strip()
+        await interaction.response.defer(ephemeral=True)
+
+        if key_val:
+            ok = _send_music_cmd(key_val, "stop")
+            embed = discord.Embed(
+                title="⏹ Music Stopped" if ok else "❌ Failed",
+                color=0xAAAAAA if ok else 0xFF4444,
+            )
+            embed.add_field(name="Key", value=f"`{key_val[:24]}{'...' if len(key_val) > 24 else ''}`", inline=True)
+        else:
+            sessions = await _fetch_sessions()
+            if not sessions:
+                await interaction.followup.send("No active sessions.", ephemeral=True)
+                return
+            stopped = sum(1 for s in sessions if _send_music_cmd(s["key"], "stop"))
+            embed = discord.Embed(
+                title="⏹ Music Stopped for All",
+                description=f"Stop queued for **{stopped}/{len(sessions)}** session(s).",
+                color=0xAAAAAA,
+            )
+        embed.set_footer(text="Vyron.cc")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+class MusicPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="▶ Play (No Loop)", style=discord.ButtonStyle.success, custom_id="music_play_once", row=0)
+    async def play_once(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not has_owner_role(interaction):
+            await interaction.response.send_message("❌ You need the **Owner** role.", ephemeral=True)
+            return
+        await interaction.response.send_modal(MusicPlayModal(loop=False))
+
+    @discord.ui.button(label="🔁 Play (Loop)", style=discord.ButtonStyle.primary, custom_id="music_play_loop", row=0)
+    async def play_loop(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not has_owner_role(interaction):
+            await interaction.response.send_message("❌ You need the **Owner** role.", ephemeral=True)
+            return
+        await interaction.response.send_modal(MusicPlayModal(loop=True))
+
+    @discord.ui.button(label="⏹ Stop Music", style=discord.ButtonStyle.danger, custom_id="music_stop", row=0)
+    async def stop_music(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not has_owner_role(interaction):
+            await interaction.response.send_message("❌ You need the **Owner** role.", ephemeral=True)
+            return
+        await interaction.response.send_modal(MusicStopModal())
+
+
+@tree.command(name="addmusicpanel", description="Post the Vyron Music Control panel in this channel")
+async def addmusicpanel(interaction: discord.Interaction):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    embed = discord.Embed(
+        title="🎵 Vyron Music Control",
+        description=(
+            "Control in-game music for users running the script.\n\n"
+            "**▶ Play (No Loop)** — play a sound once for a specific key or broadcast to all\n"
+            "**🔁 Play (Loop)** — play a sound on repeat for a specific key or broadcast to all\n"
+            "**⏹ Stop Music** — stop music for a specific key or stop for everyone\n\n"
+            "Leave the key field **blank** to target all active sessions."
+        ),
+        color=0x5080FF,
+    )
+    embed.set_footer(text="Vyron.cc • Staff only")
+
+    view = MusicPanelView()
+    await interaction.channel.send(embed=embed, view=view)
+    await interaction.response.send_message("✅ Music panel posted.", ephemeral=True)
+
+
 @tree.command(name="activesessions", description="View all users currently running the script")
 async def activesessions(interaction: discord.Interaction):
     if not has_owner_role(interaction):
@@ -2491,6 +2672,7 @@ async def on_ready():
     client.add_view(TicketSelectView())
     client.add_view(CloseTicketView())
     client.add_view(InternalPanelView())
+    client.add_view(MusicPanelView())
     # Start background expiry check loop
     asyncio.create_task(expiry_check_loop())
     # Start tamper alert polling loop
