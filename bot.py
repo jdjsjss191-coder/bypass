@@ -1910,9 +1910,10 @@ class SessionsView(discord.ui.View):
 @tree.command(name="notifyuser", description="Send an in-game notification to a user running the script")
 @app_commands.describe(
     key="The key of the user to notify",
-    message="The message to show them in-game"
+    message="The message to show them in-game",
+    sound_id="Optional Roblox sound asset ID to play with the notification"
 )
-async def notifyuser(interaction: discord.Interaction, key: str, message: str):
+async def notifyuser(interaction: discord.Interaction, key: str, message: str, sound_id: str = ""):
     if not has_owner_role(interaction):
         return await deny(interaction)
 
@@ -1922,6 +1923,7 @@ async def notifyuser(interaction: discord.Interaction, key: str, message: str):
         payload = json.dumps({
             "key": key.strip(),
             "message": message.strip(),
+            "sound_id": sound_id.strip(),
             "secret": api_secret
         }).encode("utf-8")
         req = urllib.request.Request(
@@ -1941,6 +1943,8 @@ async def notifyuser(interaction: discord.Interaction, key: str, message: str):
             )
             embed.add_field(name="Key", value=f"`{key[:24]}{'...' if len(key) > 24 else ''}`", inline=True)
             embed.add_field(name="Message", value=message, inline=False)
+            if sound_id:
+                embed.add_field(name="Sound ID", value=f"`{sound_id}`", inline=True)
             embed.set_footer(text="Vyron.cc")
             await interaction.response.send_message(embed=embed, ephemeral=True)
         else:
@@ -1949,6 +1953,137 @@ async def notifyuser(interaction: discord.Interaction, key: str, message: str):
             )
     except Exception as e:
         await interaction.response.send_message(f"❌ Error contacting API: `{e}`", ephemeral=True)
+
+
+@tree.command(name="broadcastingame", description="Send a notification to ALL users currently running the script")
+@app_commands.describe(
+    message="The message to broadcast to everyone in-game",
+    sound_id="Optional Roblox sound asset ID to play with the notification"
+)
+async def broadcastingame(interaction: discord.Interaction, message: str, sound_id: str = ""):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    await interaction.response.defer(ephemeral=True)
+
+    # Fetch active sessions
+    try:
+        req = urllib.request.Request(f"{API_BASE}/sessions", method="GET")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            sessions = json.loads(resp.read())
+    except Exception as e:
+        await interaction.followup.send(f"❌ Could not reach API: `{e}`", ephemeral=True)
+        return
+
+    if not sessions:
+        await interaction.followup.send("No active sessions to broadcast to.", ephemeral=True)
+        return
+
+    api_secret = os.environ.get("API_SECRET", "vyron_secret")
+    sent = 0
+    failed = 0
+
+    for s in sessions:
+        key = s.get("key", "")
+        if not key:
+            continue
+        try:
+            payload = json.dumps({
+                "key": key,
+                "message": message.strip(),
+                "sound_id": sound_id.strip(),
+                "secret": api_secret
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"{API_BASE}/notify",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                result = json.loads(resp.read())
+            if result.get("success"):
+                sent += 1
+            else:
+                failed += 1
+        except Exception:
+            failed += 1
+
+    embed = discord.Embed(
+        title="📡 Broadcast Sent",
+        description=f"Message delivered to **{sent}** active session(s).",
+        color=0x00CC66 if sent > 0 else 0xFF4444
+    )
+    embed.add_field(name="Message", value=message, inline=False)
+    if sound_id:
+        embed.add_field(name="Sound ID", value=f"`{sound_id}`", inline=True)
+    if failed:
+        embed.add_field(name="Failed", value=str(failed), inline=True)
+    embed.set_footer(text="Vyron.cc")
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@tree.command(name="notifyspam", description="Spam a notification to a user in-game multiple times")
+@app_commands.describe(
+    key="The key of the user to notify",
+    message="The message to spam",
+    times="How many times to send it (max 20)",
+    delay="Seconds between each notification (min 0.5)",
+    sound_id="Optional Roblox sound asset ID to play with each notification"
+)
+async def notifyspam(interaction: discord.Interaction, key: str, message: str, times: int, delay: float = 1.0, sound_id: str = ""):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    times = max(1, min(20, times))
+    delay = max(0.5, delay)
+
+    await interaction.response.defer(ephemeral=True)
+
+    api_secret = os.environ.get("API_SECRET", "vyron_secret")
+    sent = 0
+    failed = 0
+
+    for i in range(times):
+        try:
+            payload = json.dumps({
+                "key": key.strip(),
+                "message": message.strip(),
+                "sound_id": sound_id.strip(),
+                "secret": api_secret
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"{API_BASE}/notify",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                result = json.loads(resp.read())
+            if result.get("success"):
+                sent += 1
+            else:
+                failed += 1
+        except Exception:
+            failed += 1
+
+        if i < times - 1:
+            await asyncio.sleep(delay)
+
+    embed = discord.Embed(
+        title="📨 Notify Spam Complete",
+        description=f"Sent **{sent}/{times}** notifications to `{key[:24]}{'...' if len(key) > 24 else ''}`.",
+        color=0x5080FF if sent == times else 0xFF9900
+    )
+    embed.add_field(name="Message", value=message, inline=False)
+    embed.add_field(name="Times", value=str(times), inline=True)
+    embed.add_field(name="Delay", value=f"{delay}s", inline=True)
+    if sound_id:
+        embed.add_field(name="Sound ID", value=f"`{sound_id}`", inline=True)
+    if failed:
+        embed.add_field(name="Failed", value=str(failed), inline=True)
+    embed.set_footer(text="Vyron.cc")
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @tree.command(name="activesessions", description="View all users currently running the script")
