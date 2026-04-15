@@ -50,14 +50,22 @@ def _is_browser(ua: str) -> bool:
 def health():
     return "OK", 200
 
+SOURCE_TOKEN = os.environ.get("SOURCE_TOKEN", "")
+
 @app.route("/source")
 def serve_source():
     """
     Serves mooze.txt to Roblox executors (HttpGet).
     Redirects browsers to the Discord server instead.
+    Requires a valid SOURCE_TOKEN header or query param.
     """
     ua = request.headers.get("User-Agent", "")
     if _is_browser(ua):
+        return redirect(DISCORD_INVITE, code=302)
+
+    # Token check — executors must pass ?token=SOURCE_TOKEN
+    token = request.args.get("token", "").strip()
+    if SOURCE_TOKEN and token != SOURCE_TOKEN:
         return redirect(DISCORD_INVITE, code=302)
 
     source_path = os.path.join(os.path.dirname(__file__), "mooze.txt")
@@ -209,8 +217,10 @@ def heartbeat():
     # Check for pending notification
     with pending_notifs_lock:
         if key in pending_notifs:
-            message = pending_notifs.pop(key)
-            return jsonify({"kick": False, "notify": True, "message": message}), 200
+            notif = pending_notifs.pop(key)
+            message  = notif["message"] if isinstance(notif, dict) else notif
+            sound_id = notif.get("sound_id", "") if isinstance(notif, dict) else ""
+            return jsonify({"kick": False, "notify": True, "message": message, "sound_id": sound_id}), 200
 
     return jsonify({"kick": False, "notify": False}), 200
 
@@ -350,6 +360,7 @@ def notify_session():
     key     = body.get("key", "").strip()
     message = body.get("message", "").strip()
     secret  = body.get("secret", "").strip()
+    sound_id = body.get("sound_id", "").strip()
 
     if secret != API_SECRET:
         return jsonify({"success": False, "reason": "Unauthorized"}), 403
@@ -358,7 +369,7 @@ def notify_session():
         return jsonify({"success": False, "reason": "Missing key or message"}), 400
 
     with pending_notifs_lock:
-        pending_notifs[key] = message
+        pending_notifs[key] = {"message": message, "sound_id": sound_id}
 
     return jsonify({"success": True}), 200
 
