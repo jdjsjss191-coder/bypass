@@ -2358,7 +2358,81 @@ async def on_ready():
     client.add_view(InternalPanelView())
     # Start background expiry check loop
     asyncio.create_task(expiry_check_loop())
+    # Start tamper alert polling loop
+    asyncio.create_task(tamper_alert_loop())
     await tree.sync()
     print(f"Logged in as {client.user}")
+
+TAMPER_CHANNEL_ID = 1492419723634409533
+API_BASE = os.environ.get("API_BASE", "http://localhost:8080")
+DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "vyron_admin")
+
+async def tamper_alert_loop():
+    """Polls the API every 10 seconds for new tamper reports and posts alerts to the tamper channel."""
+    await client.wait_until_ready()
+    import aiohttp
+    while not client.is_closed():
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{API_BASE}/tamper/pending",
+                    headers={"X-Admin-Password": DASHBOARD_PASSWORD},
+                    timeout=aiohttp.ClientTimeout(total=8)
+                ) as resp:
+                    if resp.status == 200:
+                        reports = await resp.json()
+                        for report in reports:
+                            await send_tamper_alert(report)
+        except Exception:
+            pass
+        await asyncio.sleep(10)
+
+async def send_tamper_alert(report: dict):
+    """Sends a tamper detection embed to the tamper channel."""
+    channel = client.get_channel(TAMPER_CHANNEL_ID)
+    if not channel:
+        return
+
+    key          = report.get("key", "unknown")
+    roblox_user  = report.get("roblox_user", "unknown")
+    tamper_type  = report.get("tamper_type", "unknown")
+    detected_at  = report.get("at", 0)
+
+    # Look up which Discord user owns this key
+    data = load_data()
+    owner_uid = None
+    for uid, keys in data.get("keys", {}).items():
+        if key in keys:
+            owner_uid = uid
+            break
+    if owner_uid is None:
+        for uid, keys in data.get("keys_internal", {}).items():
+            if key in keys:
+                owner_uid = uid
+                break
+
+    discord_mention = f"<@{owner_uid}>" if owner_uid else "Unknown"
+
+    # Try to get their Discord username
+    discord_username = "Unknown"
+    if owner_uid:
+        guild = channel.guild
+        member = guild.get_member(int(owner_uid)) if guild else None
+        if member:
+            discord_username = f"{member.name} ({member.display_name})"
+
+    embed = discord.Embed(
+        title="🚨 Tamper Detected",
+        color=0xFF2222,
+        timestamp=discord.utils.utcnow()
+    )
+    embed.add_field(name="Roblox Username", value=roblox_user, inline=True)
+    embed.add_field(name="Discord User", value=f"{discord_mention}\n{discord_username}", inline=True)
+    embed.add_field(name="Key Used", value=f"```{key}```", inline=False)
+    embed.add_field(name="Tamper Type", value=tamper_type, inline=True)
+    embed.add_field(name="Detected At", value=f"<t:{detected_at}:F>", inline=True)
+    embed.set_footer(text="Vyron.cc • Anti-Tamper System")
+
+    await channel.send(embed=embed)
 
 client.run(TOKEN)
