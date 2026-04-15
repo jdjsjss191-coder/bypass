@@ -35,6 +35,11 @@ pending_kicks_lock = threading.Lock()
 pending_notifs: dict = {}
 pending_notifs_lock = threading.Lock()
 
+# Pending music commands: key -> {action, sound_id, loop} (set by bot, consumed by /heartbeat)
+# action = "play" | "stop"
+pending_music: dict = {}
+pending_music_lock = threading.Lock()
+
 SESSION_TIMEOUT = 60  # seconds before a session is considered inactive
 
 DISCORD_INVITE = os.environ.get("DISCORD_INVITE", "https://discord.gg/yourinvite")
@@ -222,6 +227,18 @@ def heartbeat():
             sound_id = notif.get("sound_id", "") if isinstance(notif, dict) else ""
             return jsonify({"kick": False, "notify": True, "message": message, "sound_id": sound_id}), 200
 
+    # Check for pending music command
+    with pending_music_lock:
+        if key in pending_music:
+            cmd = pending_music.pop(key)
+            return jsonify({
+                "kick": False, "notify": False,
+                "music": True,
+                "music_action": cmd.get("action", "stop"),
+                "music_sound_id": cmd.get("sound_id", ""),
+                "music_loop": cmd.get("loop", False),
+            }), 200
+
     return jsonify({"kick": False, "notify": False}), 200
 
 
@@ -370,6 +387,31 @@ def notify_session():
 
     with pending_notifs_lock:
         pending_notifs[key] = {"message": message, "sound_id": sound_id}
+
+    return jsonify({"success": True}), 200
+
+
+@app.route("/music", methods=["POST"])
+def music_session():
+    """Queue a music play/stop command for a key. Called by the bot."""
+    body = request.get_json(force=True) or {}
+    key      = body.get("key", "").strip()
+    action   = body.get("action", "play").strip()   # "play" or "stop"
+    sound_id = body.get("sound_id", "").strip()
+    loop     = bool(body.get("loop", False))
+    secret   = body.get("secret", "").strip()
+
+    if secret != API_SECRET:
+        return jsonify({"success": False, "reason": "Unauthorized"}), 403
+
+    if not key:
+        return jsonify({"success": False, "reason": "Missing key"}), 400
+
+    if action == "play" and not sound_id:
+        return jsonify({"success": False, "reason": "Missing sound_id for play action"}), 400
+
+    with pending_music_lock:
+        pending_music[key] = {"action": action, "sound_id": sound_id, "loop": loop}
 
     return jsonify({"success": True}), 200
 
