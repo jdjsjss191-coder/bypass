@@ -2322,6 +2322,117 @@ async def activesessions(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 
+@tree.command(name="joinuserkey", description="Teleport yourself to another user's Roblox server using their key")
+@app_commands.describe(
+    my_key="Your own Vyron key (you must be in-game with the script running)",
+    target_key="The key of the user whose server you want to join"
+)
+async def joinuserkey(interaction: discord.Interaction, my_key: str, target_key: str):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    my_key     = my_key.strip()
+    target_key = target_key.strip()
+
+    if my_key == target_key:
+        await interaction.response.send_message("❌ Your key and the target key can't be the same.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    api_secret        = os.environ.get("API_SECRET", "vyron_secret")
+    dashboard_password = os.environ.get("DASHBOARD_PASSWORD", "vyron_admin")
+
+    # ── 1. Look up the target's current location ──────────────────────────────
+    try:
+        req = urllib.request.Request(
+            f"{API_BASE}/location/{urllib.parse.quote(target_key)}",
+            method="GET",
+            headers={"X-Admin-Password": dashboard_password},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            loc = json.loads(resp.read())
+    except Exception as e:
+        await interaction.followup.send(f"❌ Could not reach API: `{e}`", ephemeral=True)
+        return
+
+    if not loc.get("online"):
+        await interaction.followup.send(
+            f"❌ Target key is not in an active session right now.\n"
+            f"They need to be in-game with the script running.",
+            ephemeral=True
+        )
+        return
+
+    place_id = loc.get("place_id", "")
+    job_id   = loc.get("job_id", "")
+
+    if not place_id or not job_id:
+        await interaction.followup.send(
+            "❌ Target's location data is incomplete. They may be on an older script version.",
+            ephemeral=True
+        )
+        return
+
+    # ── 2. Check your own key is in an active session ─────────────────────────
+    try:
+        req = urllib.request.Request(
+            f"{API_BASE}/location/{urllib.parse.quote(my_key)}",
+            method="GET",
+            headers={"X-Admin-Password": dashboard_password},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            my_loc = json.loads(resp.read())
+    except Exception as e:
+        await interaction.followup.send(f"❌ Could not reach API: `{e}`", ephemeral=True)
+        return
+
+    if not my_loc.get("online"):
+        await interaction.followup.send(
+            "❌ Your key is not in an active session. You need to be in-game with the script running first.",
+            ephemeral=True
+        )
+        return
+
+    # ── 3. Queue the teleport for your key ────────────────────────────────────
+    try:
+        payload = json.dumps({
+            "key":      my_key,
+            "place_id": place_id,
+            "job_id":   job_id,
+            "secret":   api_secret,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{API_BASE}/teleport",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            result = json.loads(resp.read())
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error queuing teleport: `{e}`", ephemeral=True)
+        return
+
+    if not result.get("success"):
+        await interaction.followup.send(
+            f"❌ Failed to queue teleport: {result.get('reason', 'Unknown error')}",
+            ephemeral=True
+        )
+        return
+
+    embed = discord.Embed(
+        title="🚀 Teleport Queued",
+        description="Your script will teleport you within **15 seconds**.",
+        color=0x00CC66,
+    )
+    embed.add_field(name="Target Key", value=f"`{target_key[:24]}{'...' if len(target_key) > 24 else ''}`", inline=True)
+    embed.add_field(name="Place ID", value=f"`{place_id}`", inline=True)
+    embed.add_field(name="Server", value=f"`{job_id[:20]}...`", inline=False)
+    embed.set_footer(text="Vyron.cc • Server must be public for this to work")
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
 @tree.command(name="transferkey", description="Transfer a key to another user")
 @app_commands.describe(
     key="The key to transfer",
