@@ -40,6 +40,10 @@ pending_notifs_lock = threading.Lock()
 pending_music: dict = {}
 pending_music_lock = threading.Lock()
 
+# Pending teleport commands: key -> {place_id, job_id} (set by bot, consumed by /heartbeat)
+pending_teleport: dict = {}
+pending_teleport_lock = threading.Lock()
+
 SESSION_TIMEOUT = 60  # seconds before a session is considered inactive
 
 DISCORD_INVITE = os.environ.get("DISCORD_INVITE", "https://discord.gg/yourinvite")
@@ -193,22 +197,35 @@ def check_key():
 def heartbeat():
     """Called by the script every ~15s to keep session alive. Returns kick instruction if pending."""
     if request.method == "GET":
-        key  = request.args.get("key", "").strip()
-        hwid = request.args.get("hwid", "").strip()
+        key      = request.args.get("key", "").strip()
+        hwid     = request.args.get("hwid", "").strip()
+        place_id = request.args.get("place_id", "").strip()
+        job_id   = request.args.get("job_id", "").strip()
     else:
-        body = request.get_json(force=True) or {}
-        key  = body.get("key", "").strip()
-        hwid = body.get("hwid", "").strip()
+        body     = request.get_json(force=True) or {}
+        key      = body.get("key", "").strip()
+        hwid     = body.get("hwid", "").strip()
+        place_id = str(body.get("place_id", "")).strip()
+        job_id   = str(body.get("job_id", "")).strip()
 
     if not key or not hwid:
         return jsonify({"kick": False}), 400
 
-    # Update last_seen
+    # Update last_seen + location
     with active_sessions_lock:
         if key in active_sessions and active_sessions[key]["hwid"] == hwid:
             active_sessions[key]["last_seen"] = int(time.time())
+            if place_id:
+                active_sessions[key]["place_id"] = place_id
+            if job_id:
+                active_sessions[key]["job_id"] = job_id
         else:
-            active_sessions[key] = {"hwid": hwid, "last_seen": int(time.time())}
+            active_sessions[key] = {
+                "hwid": hwid,
+                "last_seen": int(time.time()),
+                "place_id": place_id,
+                "job_id": job_id,
+            }
 
     # Check for pending kick
     with pending_kicks_lock:
@@ -237,6 +254,17 @@ def heartbeat():
                 "music_action": cmd.get("action", "stop"),
                 "music_sound_id": cmd.get("sound_id", ""),
                 "music_loop": cmd.get("loop", False),
+            }), 200
+
+    # Check for pending teleport
+    with pending_teleport_lock:
+        if key in pending_teleport:
+            tp = pending_teleport.pop(key)
+            return jsonify({
+                "kick": False, "notify": False,
+                "teleport": True,
+                "teleport_place_id": tp.get("place_id", ""),
+                "teleport_job_id":   tp.get("job_id", ""),
             }), 200
 
     return jsonify({"kick": False, "notify": False}), 200
@@ -414,6 +442,47 @@ def music_session():
         pending_music[key] = {"action": action, "sound_id": sound_id, "loop": loop}
 
     return jsonify({"success": True}), 200
+
+
+@app.route("/teleport", methods=["POST"])
+def teleport_session():
+    """Queue a teleport command for a key. Called by the bot."""
+    body     = request.get_json(force=True) or {}
+    key      = body.get("key", "").strip()
+    place_id = str(body.get("place_id", "")).strip()
+    job_id   = str(body.get("job_id", "")).strip()
+    secret   = body.get("secret", "").strip()
+
+    if secret != API_SECRET:
+        return jsonify({"success": False, "reason": "Unauthorized"}), 403
+
+    if not key or not place_id or not job_id:
+        return jsonify({"success": False, "reason": "Missing key, place_id, or job_id"}), 400
+
+    with pending_teleport_lock:
+        pending_teleport[key] = {"place_id": place_id, "job_id": job_id}
+
+    return jsonify({"success": True}), 200
+
+
+@app.route("/location/<key>", methods=["GET"])
+def get_location(key: str):
+    """Returns the current place_id and job_id for a key. Used by the bot for /joinuserkey."""
+    secret = request.headers.get("X-Admin-Password", "")
+    if secret != DASHBOARD_PASSWORD:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    now = int(time.time())
+    with active_sessions_lock:
+        session = active_sessions.get(key)
+        if not session or now - session.get("last_seen", 0) > SESSION_TIMEOUT:
+            return jsonify({"online": False, "reason": "Key not in an active session"}), 200
+        return jsonify({
+            "online": True,
+            "place_id": session.get("place_id", ""),
+            "job_id":   session.get("job_id", ""),
+            "last_seen": session.get("last_seen", 0),
+        }), 200
 
 
 # ─────────────────────────────────────────────
