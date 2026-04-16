@@ -693,7 +693,7 @@ body{font-family:"Instrument Sans",system-ui,sans-serif;background:var(--bg);col
 </div>
 <script>
 const API="https://bypass-production-5fff.up.railway.app";
-const CORRECT_PW="%s";
+const CORRECT_PW="__DASHBOARD_PW__";
 let pw=null,attempts=0,lockUntil=0;
 function doLogin(){const el=document.getElementById("lerr");if(Date.now()<lockUntil){el.textContent="Too many attempts. Wait "+Math.ceil((lockUntil-Date.now())/1000)+"s.";el.classList.add("show");return;}const v=document.getElementById("pw").value;if(v!==CORRECT_PW){attempts++;if(attempts>=5){lockUntil=Date.now()+5*60*1000;attempts=0;}el.textContent="Incorrect password.";el.classList.add("show");document.getElementById("pw").value="";return;}pw=v;attempts=0;el.classList.remove("show");document.getElementById("login").style.display="none";document.getElementById("editor").classList.add("show");loadSource();}
 document.getElementById("pw").addEventListener("keydown",e=>{if(e.key==="Enter")doLogin();});
@@ -716,7 +716,8 @@ LOGIN_HTML = ""  # no longer used
 
 @app.route("/dashboard", methods=["GET"])
 def dashboard():
-    return DASHBOARD_HTML % DASHBOARD_PASSWORD, 200, {"Content-Type": "text/html"}
+    html = DASHBOARD_HTML.replace("__DASHBOARD_PW__", DASHBOARD_PASSWORD)
+    return html, 200, {"Content-Type": "text/html"}
 
 
 @app.route("/dashboard/login", methods=["GET", "POST"])
