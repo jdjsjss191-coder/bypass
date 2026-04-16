@@ -539,14 +539,184 @@ def admin_save_source():
 #  DASHBOARD
 # ─────────────────────────────────────────────
 
-DASHBOARD_HTML = open(os.path.join(os.path.dirname(__file__), "..", "vyron-site", "source.html"), "r", encoding="utf-8").read() if os.path.exists(os.path.join(os.path.dirname(__file__), "..", "vyron-site", "source.html")) else "<h1>source.html not found</h1>"
+DASHBOARD_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="robots" content="noindex,nofollow"/>
+<title>Vyron Source Manager</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+:root{--bg:#030306;--card:rgba(14,14,22,.9);--b:rgba(255,255,255,.07);--bs:rgba(255,255,255,.13);--t:#f0f0f8;--m:#8080a0;--a:#6b8aff;--g:#3dd4a0;--r:#ff5566;--rad:12px}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:"Instrument Sans",system-ui,sans-serif;background:var(--bg);color:var(--t);-webkit-font-smoothing:antialiased}
+.bg{position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(ellipse 90% 70% at 50% -20%,rgba(60,80,200,.3) 0%,transparent 55%),radial-gradient(ellipse 60% 50% at 90% 80%,rgba(40,160,140,.1) 0%,transparent 50%)}
+.bg-grid{position:fixed;inset:0;z-index:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.022) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.022) 1px,transparent 1px);background-size:52px 52px;mask-image:radial-gradient(ellipse 80% 60% at 50% 30%,black 20%,transparent 70%)}
+#login{position:relative;z-index:10;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.5rem}
+.lcard{width:100%;max-width:400px;background:var(--card);border:1px solid var(--bs);border-radius:20px;padding:2.5rem 2rem;backdrop-filter:blur(24px);box-shadow:0 40px 100px rgba(0,0,0,.55)}
+.llogo{text-align:center;margin-bottom:2rem}
+.llogo .nm{font-size:1.6rem;font-weight:700;letter-spacing:-.04em}
+.llogo .nm span{color:var(--m);font-weight:500}
+.llogo .sub{font-family:"JetBrains Mono",monospace;font-size:.6rem;letter-spacing:.2em;text-transform:uppercase;color:var(--m);margin-top:.4rem}
+.fl{margin-bottom:1.1rem}
+.fl label{display:block;font-size:.75rem;font-weight:600;color:var(--m);margin-bottom:.4rem;letter-spacing:.05em;text-transform:uppercase}
+.fl input{width:100%;padding:.8rem 1rem;border-radius:10px;border:1px solid var(--bs);background:rgba(0,0,0,.4);color:var(--t);font-family:"JetBrains Mono",monospace;font-size:.9rem;outline:none;transition:border-color .2s,box-shadow .2s}
+.fl input:focus{border-color:var(--a);box-shadow:0 0 0 3px rgba(107,138,255,.15)}
+.fl input::placeholder{color:rgba(255,255,255,.18)}
+.lbtn{width:100%;padding:.9rem;border-radius:10px;border:none;background:linear-gradient(135deg,#6b8aff 0%,#5060e0 100%);color:#fff;font-family:"Instrument Sans",sans-serif;font-size:.95rem;font-weight:700;cursor:pointer;margin-top:.25rem;box-shadow:0 6px 24px rgba(107,138,255,.35);transition:filter .15s,transform .15s}
+.lbtn:hover{filter:brightness(1.1);transform:translateY(-2px)}
+.lerr{margin-top:.9rem;padding:.65rem 1rem;border-radius:8px;background:rgba(255,85,102,.1);border:1px solid rgba(255,85,102,.25);color:var(--r);font-size:.82rem;text-align:center;display:none}
+.lerr.show{display:block}
+.lnote{margin-top:1.25rem;text-align:center;font-size:.7rem;color:var(--m);display:flex;align-items:center;justify-content:center;gap:.35rem}
+#editor{display:none;position:relative;z-index:10;min-height:100vh;flex-direction:column}
+#editor.show{display:flex}
+.topbar{position:sticky;top:0;z-index:50;background:rgba(3,3,6,.8);backdrop-filter:blur(20px);border-bottom:1px solid var(--b);padding:.8rem 1.5rem;display:flex;align-items:center;justify-content:space-between;gap:1rem}
+.tl{display:flex;align-items:center;gap:.75rem}
+.tlogo{font-size:1rem;font-weight:700;letter-spacing:-.03em}
+.tlogo span{color:var(--m);font-weight:500}
+.tbadge{font-family:"JetBrains Mono",monospace;font-size:.6rem;padding:.25rem .55rem;border-radius:999px;background:rgba(61,212,160,.1);border:1px solid rgba(61,212,160,.25);color:var(--g);letter-spacing:.08em}
+.tr{display:flex;align-items:center;gap:.6rem}
+.outbtn{padding:.38rem .8rem;border-radius:8px;border:1px solid var(--bs);background:rgba(255,255,255,.04);color:var(--m);font-size:.78rem;font-weight:600;cursor:pointer;transition:color .15s,border-color .15s}
+.outbtn:hover{color:var(--r);border-color:rgba(255,85,102,.3)}
+.body{flex:1;display:grid;grid-template-columns:1fr 300px;gap:1.25rem;max-width:1400px;width:100%;margin:0 auto;padding:1.5rem}
+@media(max-width:860px){.body{grid-template-columns:1fr}}
+.cpanel{display:flex;flex-direction:column;gap:.75rem}
+.ph{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem}
+.ptitle{font-size:.95rem;font-weight:600}
+.pmeta{font-family:"JetBrains Mono",monospace;font-size:.7rem;color:var(--m)}
+.eframe{position:relative;border-radius:var(--rad);border:1px solid var(--bs);overflow:hidden;background:rgba(0,0,0,.45)}
+.edots{position:absolute;top:11px;left:14px;z-index:2;display:flex;gap:6px}
+.edots span{width:11px;height:11px;border-radius:50%;display:block}
+.edots span:nth-child(1){background:#ff5f57}
+.edots span:nth-child(2){background:#febc2e}
+.edots span:nth-child(3){background:#28c840}
+.efname{position:absolute;top:9px;left:50%;transform:translateX(-50%);z-index:2;font-family:"JetBrains Mono",monospace;font-size:.7rem;color:var(--m)}
+#code{width:100%;min-height:520px;padding:2.75rem 1.1rem 1.1rem;background:transparent;border:none;color:#b8d0ff;font-family:"JetBrains Mono",monospace;font-size:.82rem;line-height:1.65;resize:vertical;outline:none;tab-size:4}
+#code::placeholder{color:rgba(255,255,255,.15)}
+.abar{display:flex;gap:.6rem;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:.4rem;padding:.65rem 1.15rem;border-radius:9px;border:none;font-family:"Instrument Sans",sans-serif;font-size:.85rem;font-weight:600;cursor:pointer;transition:filter .15s,transform .15s;white-space:nowrap}
+.btn:hover{filter:brightness(1.1);transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.btn-pub{background:linear-gradient(135deg,#6b8aff 0%,#5060e0 100%);color:#fff;box-shadow:0 4px 18px rgba(107,138,255,.3)}
+.btn-load{background:rgba(255,255,255,.05);border:1px solid var(--bs);color:var(--t)}
+.btn-copy{background:rgba(61,212,160,.1);border:1px solid rgba(61,212,160,.2);color:var(--g)}
+.btn-clr{background:rgba(255,85,102,.1);border:1px solid rgba(255,85,102,.2);color:var(--r)}
+.sbar{padding:.55rem .9rem;border-radius:8px;font-family:"JetBrains Mono",monospace;font-size:.75rem;display:none}
+.sbar.ok{display:block;background:rgba(61,212,160,.08);border:1px solid rgba(61,212,160,.2);color:var(--g)}
+.sbar.err{display:block;background:rgba(255,85,102,.08);border:1px solid rgba(255,85,102,.2);color:var(--r)}
+.side{display:flex;flex-direction:column;gap:1rem}
+.icard{background:var(--card);border:1px solid var(--b);border-radius:var(--rad);padding:1.25rem;backdrop-filter:blur(10px)}
+.ilabel{font-family:"JetBrains Mono",monospace;font-size:.6rem;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--a);margin-bottom:.75rem}
+.irow{display:flex;justify-content:space-between;align-items:center;padding:.45rem 0;border-bottom:1px solid var(--b);font-size:.82rem}
+.irow:last-child{border-bottom:none}
+.ik{color:var(--m)}
+.iv{font-family:"JetBrains Mono",monospace;font-size:.75rem}
+.iv.g{color:var(--g)}
+.iv.r{color:var(--r)}
+.tcard{background:rgba(107,138,255,.06);border:1px solid rgba(107,138,255,.15);border-radius:var(--rad);padding:1.1rem}
+.tcard ul{list-style:none;display:flex;flex-direction:column;gap:.45rem}
+.tcard li{font-size:.8rem;color:var(--m);display:flex;align-items:flex-start;gap:.5rem}
+.tcard li::before{content:"→";color:var(--a);flex-shrink:0}
+</style>
+</head>
+<body>
+<div class="bg"></div>
+<div class="bg-grid"></div>
+<div id="login">
+  <div class="lcard">
+    <div class="llogo">
+      <div class="nm">Vyron<span>.cc</span></div>
+      <div class="sub">Source Manager</div>
+    </div>
+    <div class="fl">
+      <label>Password</label>
+      <input type="password" id="pw" placeholder="Enter password" autocomplete="off"/>
+    </div>
+    <button class="lbtn" onclick="doLogin()">Access Editor</button>
+    <div class="lerr" id="lerr">Incorrect password.</div>
+    <div class="lnote">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      Restricted — staff only
+    </div>
+  </div>
+</div>
+<div id="editor">
+  <div class="topbar">
+    <div class="tl">
+      <div class="tlogo">Vyron<span>.cc</span></div>
+      <span class="tbadge">&#9679; SOURCE MANAGER</span>
+    </div>
+    <div class="tr">
+      <span id="saved-label" style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--m)"></span>
+      <button class="outbtn" onclick="doLogout()">Sign out</button>
+    </div>
+  </div>
+  <div class="body">
+    <div class="cpanel">
+      <div class="ph">
+        <div class="ptitle">Script Source</div>
+        <div class="pmeta" id="lcount">0 lines</div>
+      </div>
+      <div class="eframe">
+        <div class="edots"><span></span><span></span><span></span></div>
+        <div class="efname">vyronrewrite.lua</div>
+        <textarea id="code" spellcheck="false" placeholder="-- paste your Lua source here..."></textarea>
+      </div>
+      <div class="abar">
+        <button class="btn btn-pub" onclick="publishSource()">Publish Source</button>
+        <button class="btn btn-load" onclick="loadSource()">Load Current</button>
+        <button class="btn btn-copy" onclick="copySource()">Copy</button>
+        <button class="btn btn-clr" onclick="document.getElementById('code').value='';updateMeta()">Clear</button>
+      </div>
+      <div class="sbar" id="pub-status"></div>
+    </div>
+    <div class="side">
+      <div class="icard">
+        <div class="ilabel">Source Info</div>
+        <div class="irow"><span class="ik">Status</span><span class="iv g" id="i-status">Ready</span></div>
+        <div class="irow"><span class="ik">Lines</span><span class="iv" id="i-lines">&#8212;</span></div>
+        <div class="irow"><span class="ik">Characters</span><span class="iv" id="i-chars">&#8212;</span></div>
+        <div class="irow"><span class="ik">Last published</span><span class="iv" id="i-pub">&#8212;</span></div>
+      </div>
+      <div class="tcard">
+        <div class="ilabel">Tips</div>
+        <ul>
+          <li>Ctrl+S to publish instantly</li>
+          <li>Load Current pulls the live source</li>
+          <li>Publish overwrites what clients receive</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const API="https://bypass-production-5fff.up.railway.app";
+const CORRECT_PW="%s";
+let pw=null,attempts=0,lockUntil=0;
+function doLogin(){const el=document.getElementById("lerr");if(Date.now()<lockUntil){el.textContent="Too many attempts. Wait "+Math.ceil((lockUntil-Date.now())/1000)+"s.";el.classList.add("show");return;}const v=document.getElementById("pw").value;if(v!==CORRECT_PW){attempts++;if(attempts>=5){lockUntil=Date.now()+5*60*1000;attempts=0;}el.textContent="Incorrect password.";el.classList.add("show");document.getElementById("pw").value="";return;}pw=v;attempts=0;el.classList.remove("show");document.getElementById("login").style.display="none";document.getElementById("editor").classList.add("show");loadSource();}
+document.getElementById("pw").addEventListener("keydown",e=>{if(e.key==="Enter")doLogin();});
+function doLogout(){pw=null;document.getElementById("editor").classList.remove("show");document.getElementById("login").style.display="";document.getElementById("pw").value="";document.getElementById("code").value="";}
+function h(){return{"Content-Type":"application/json","X-Admin-Password":pw};}
+function updateMeta(){const v=document.getElementById("code").value;const l=v?v.split("\n").length:0;document.getElementById("lcount").textContent=l+" lines";document.getElementById("i-lines").textContent=l;document.getElementById("i-chars").textContent=v.length;}
+document.getElementById("code").addEventListener("input",updateMeta);
+document.getElementById("code").addEventListener("keydown",e=>{if((e.ctrlKey||e.metaKey)&&e.key==="s"){e.preventDefault();publishSource();}if(e.key==="Tab"){e.preventDefault();const s=e.target.selectionStart,end=e.target.selectionEnd;e.target.value=e.target.value.substring(0,s)+"    "+e.target.value.substring(end);e.target.selectionStart=e.target.selectionEnd=s+4;updateMeta();}});
+async function loadSource(){const el=document.getElementById("pub-status");try{const r=await fetch(API+"/admin/source",{headers:h()});const d=await r.json();document.getElementById("code").value=d.source||"";if(d.saved_at){document.getElementById("saved-label").textContent="Last saved: "+d.saved_at;document.getElementById("i-pub").textContent=d.saved_at;}updateMeta();el.textContent="Loaded.";el.className="sbar ok";setTimeout(()=>{el.className="sbar";},3000);}catch(e){el.textContent="Failed: "+e.message;el.className="sbar err";}}
+async function publishSource(){const src=document.getElementById("code").value;const el=document.getElementById("pub-status");const si=document.getElementById("i-status");si.textContent="Publishing...";si.className="iv";try{const r=await fetch(API+"/admin/source",{method:"POST",headers:h(),body:JSON.stringify({source:src})});const d=await r.json();if(d.success){const now=new Date().toLocaleTimeString();el.textContent="Published at "+now;el.className="sbar ok";document.getElementById("saved-label").textContent="Last saved: "+now;document.getElementById("i-pub").textContent=now;si.textContent="Published";si.className="iv g";}else{el.textContent="Failed: "+(d.error||"Unknown");el.className="sbar err";si.textContent="Error";si.className="iv r";}}catch(e){el.textContent="Error: "+e.message;el.className="sbar err";si.textContent="Error";si.className="iv r";}}
+function copySource(){const src=document.getElementById("code").value;if(!src)return;navigator.clipboard.writeText(src).then(()=>{const el=document.getElementById("pub-status");el.textContent="Copied.";el.className="sbar ok";setTimeout(()=>{el.className="sbar";},2000);});}
+document.addEventListener("contextmenu",e=>e.preventDefault());
+document.addEventListener("keydown",e=>{if(e.key==="F12"||(e.ctrlKey&&e.shiftKey&&["I","J","C"].includes(e.key)))e.preventDefault();});
+</script>
+</body>
+</html>"""
 
-LOGIN_HTML = ""  # no longer used — login is handled in source.html
+LOGIN_HTML = ""  # no longer used
 
 
 @app.route("/dashboard", methods=["GET"])
 def dashboard():
-    return DASHBOARD_HTML, 200, {"Content-Type": "text/html"}
+    return DASHBOARD_HTML % DASHBOARD_PASSWORD, 200, {"Content-Type": "text/html"}
 
 
 @app.route("/dashboard/login", methods=["GET", "POST"])
@@ -561,7 +731,6 @@ def dashboard_logout():
 
 @app.route("/dashboard/save", methods=["POST"])
 def dashboard_save():
-    # kept for backwards compat — proxies to /admin/source
     if not _check_admin_password(request):
         return jsonify({"success": False, "error": "Unauthorized"}), 403
     body = request.get_json(force=True) or {}
