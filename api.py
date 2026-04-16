@@ -46,7 +46,7 @@ pending_teleport_lock = threading.Lock()
 
 SESSION_TIMEOUT = 60  # seconds before a session is considered inactive
 
-DISCORD_INVITE = os.environ.get("DISCORD_INVITE", "https://discord.gg/yourinvite")
+DISCORD_INVITE = os.environ.get("DISCORD_INVITE", "https://discord.gg/RzCyAwnMqa")
 
 # Browser user-agent keywords — if any match, redirect to Discord
 BROWSER_AGENTS = ("mozilla", "chrome", "safari", "firefox", "edge", "opera", "webkit")
@@ -54,6 +54,15 @@ BROWSER_AGENTS = ("mozilla", "chrome", "safari", "firefox", "edge", "opera", "we
 def _is_browser(ua: str) -> bool:
     ua_lower = ua.lower()
     return any(kw in ua_lower for kw in BROWSER_AGENTS)
+
+@app.route("/source-editor")
+def source_editor():
+    html_path = os.path.join(os.path.dirname(__file__), "..", "vyron-site", "source.html")
+    if not os.path.exists(html_path):
+        return "Not found", 404
+    with open(html_path, "r", encoding="utf-8") as f:
+        return f.read(), 200, {"Content-Type": "text/html"}
+
 
 @app.route("/")
 def health():
