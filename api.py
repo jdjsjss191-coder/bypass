@@ -131,11 +131,15 @@ def check_key():
         key = request.args.get("key", "").strip()
         hwid = request.args.get("hwid", "").strip()
         edition = (request.args.get("edition") or request.args.get("ed") or "").strip().lower()
+        roblox_id = request.args.get("roblox_id", "").strip()
+        roblox_name = request.args.get("roblox_name", "").strip()
     else:
         body = request.get_json(force=True) or {}
         key = body.get("key", "").strip()
         hwid = body.get("hwid", "").strip()
         edition = str(body.get("edition") or body.get("ed") or "").strip().lower()
+        roblox_id = str(body.get("roblox_id", "") or "").strip()
+        roblox_name = str(body.get("roblox_name", "") or "").strip()
 
     if not key or not hwid:
         return jsonify({"valid": False, "reason": "Missing key or hwid"}), 400
@@ -196,6 +200,12 @@ def check_key():
         key_hwid[key] = hwid
         executions = data.setdefault("key_executions", {})
         executions[key] = executions.get(key, 0) + 1
+        data.setdefault("key_last_exec", {})[key] = int(time.time())
+        if roblox_id or roblox_name:
+            data.setdefault("key_roblox_info", {})[key] = {
+                "id": roblox_id,
+                "name": roblox_name,
+            }
         save_data(data)
         # Register active session
         with active_sessions_lock:
@@ -220,6 +230,11 @@ def check_key():
         executions = data.setdefault("key_executions", {})
         executions[key] = executions.get(key, 0) + 1
         data.setdefault("key_last_exec", {})[key] = int(time.time())
+        if roblox_id or roblox_name:
+            data.setdefault("key_roblox_info", {})[key] = {
+                "id": roblox_id,
+                "name": roblox_name,
+            }
         save_data(data)
         # Register active session
         with active_sessions_lock:
@@ -780,6 +795,112 @@ def dashboard_save():
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/lookup", methods=["GET"])
+def lookup_key():
+    """Return full info about a key. Requires X-Admin-Password header."""
+    if not _check_admin_password(request):
+        return jsonify({"error": "Unauthorized"}), 403
+
+    key = request.args.get("key", "").strip()
+    if not key:
+        return jsonify({"error": "Missing key parameter"}), 400
+
+    data = load_data()
+    now = int(time.time())
+
+    # Determine type and owner
+    owner_uid = None
+
+    for uid, keys in data.get("keys", {}).items():
+        if key in keys:
+            owner_uid = uid
+            break
+    if owner_uid is None:
+        for uid, keys in data.get("keys_internal", {}).items():
+            if key in keys:
+                owner_uid = uid
+                break
+
+    # Check temp keys if still not found
+    is_temp = False
+    if owner_uid is None:
+        for uid, tkeys in data.get("temp_keys", {}).items():
+            for t in tkeys:
+                if t.get("key") == key:
+                    owner_uid = uid
+                    is_temp = True
+                    break
+            if owner_uid:
+                break
+        if owner_uid is None:
+            for uid, tkeys in data.get("temp_keys_internal", {}).items():
+                for t in tkeys:
+                    if t.get("key") == key:
+                        owner_uid = uid
+                        is_temp = True
+                        break
+                if owner_uid:
+                    break
+
+    if owner_uid is None:
+        return jsonify({"error": "Key not found"}), 404
+
+    # Determine key type
+    if is_temp:
+        key_type = "temp"
+    elif key.startswith("VyronInt-"):
+        key_type = "internal"
+    else:
+        key_type = "external"
+
+    # Expiry
+    expiry_ts = data.get("key_expiry", {}).get(key)
+    if expiry_ts is None:
+        expiry_str = "Lifetime"
+    elif now > expiry_ts:
+        expiry_str = "Expired"
+    else:
+        secs_left = expiry_ts - now
+        if secs_left < 3600:
+            expiry_str = f"{secs_left // 60}m"
+        elif secs_left < 86400:
+            expiry_str = f"{secs_left // 3600}h"
+        elif secs_left < 604800:
+            expiry_str = f"{secs_left // 86400}d"
+        elif secs_left < 2592000:
+            expiry_str = f"{secs_left // 604800}w"
+        else:
+            expiry_str = f"{secs_left // 2592000} month(s)"
+
+    # Active session check
+    with active_sessions_lock:
+        session = active_sessions.get(key)
+    is_active = bool(session and now - session.get("last_seen", 0) <= SESSION_TIMEOUT)
+
+    # Roblox info
+    roblox_info = data.get("key_roblox_info", {}).get(key, {})
+
+    # Blacklisted?
+    blacklisted = owner_uid in data.get("blacklist", {})
+
+    return jsonify({
+        "key": key,
+        "type": key_type,
+        "owner_uid": owner_uid,
+        "generated_by": data.get("key_generated_by", {}).get(key),
+        "created": data.get("key_created", {}).get(key),
+        "expiry": expiry_str,
+        "expiry_ts": expiry_ts,
+        "hwid": data.get("key_hwid", {}).get(key),
+        "roblox_id": roblox_info.get("id", ""),
+        "roblox_name": roblox_info.get("name", ""),
+        "executions": data.get("key_executions", {}).get(key, 0),
+        "last_exec": data.get("key_last_exec", {}).get(key),
+        "active": is_active,
+        "blacklisted": blacklisted,
+    }), 200
 
 
 def run_api():
