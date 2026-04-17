@@ -21,6 +21,18 @@ DATA_FILE = "data.json"
 API_SECRET = os.environ.get("API_SECRET", "vyron_secret")
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "vyron_admin")
 SOURCE_FILE = os.path.join(os.path.dirname(__file__), "mooze.txt")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+
+
+def _fire_webhook(payload: dict):
+    """Send a webhook notification in a background thread. Never raises."""
+    if not WEBHOOK_URL:
+        return
+    try:
+        import requests as _requests
+        _requests.post(WEBHOOK_URL, json=payload, timeout=5)
+    except Exception:
+        pass
 
 # In-memory active sessions: key -> {hwid, last_seen, kick_reason}
 # A session is "active" if last_seen within 60 seconds
@@ -188,6 +200,19 @@ def check_key():
         # Register active session
         with active_sessions_lock:
             active_sessions[key] = {"hwid": hwid, "last_seen": int(time.time())}
+        # Webhook notification
+        threading.Thread(target=_fire_webhook, args=({
+            "embeds": [{
+                "title": "✅ Key Executed (New HWID Bound)",
+                "color": 0x00CC66,
+                "fields": [
+                    {"name": "Key", "value": f"`{key}`", "inline": False},
+                    {"name": "HWID", "value": hwid, "inline": True},
+                    {"name": "PlaceId", "value": "N/A", "inline": True},
+                ],
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }]
+        },), daemon=True).start()
         return jsonify({"valid": True, "reason": "Key bound to HWID"}), 200
     elif key_hwid[key] != hwid:
         return jsonify({"valid": False, "reason": "HWID mismatch"}), 200
@@ -199,6 +224,19 @@ def check_key():
         # Register active session
         with active_sessions_lock:
             active_sessions[key] = {"hwid": hwid, "last_seen": int(time.time())}
+        # Webhook notification
+        threading.Thread(target=_fire_webhook, args=({
+            "embeds": [{
+                "title": "✅ Key Executed",
+                "color": 0x5080FF,
+                "fields": [
+                    {"name": "Key", "value": f"`{key}`", "inline": False},
+                    {"name": "HWID", "value": hwid, "inline": True},
+                    {"name": "PlaceId", "value": "N/A", "inline": True},
+                ],
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }]
+        },), daemon=True).start()
         return jsonify({"valid": True, "reason": "OK"}), 200
 
 
