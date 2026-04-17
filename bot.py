@@ -988,8 +988,89 @@ async def revokekey(interaction: discord.Interaction, key: str):
     )
 
 
-# ─────────────────────────────────────────────
-#  MODERATION COMMANDS
+@tree.command(name="renamekey", description="Rename an existing key to a new value")
+@app_commands.describe(
+    old_key="The current key to rename",
+    new_key="The new key value"
+)
+async def renamekey(interaction: discord.Interaction, old_key: str, new_key: str):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    old_key = old_key.strip()
+    new_key = new_key.strip()
+
+    if not new_key or len(new_key) < 4:
+        await interaction.response.send_message("❌ New key must be at least 4 characters.", ephemeral=True)
+        return
+    if len(new_key) > 64:
+        await interaction.response.send_message("❌ New key must be 64 characters or less.", ephemeral=True)
+        return
+
+    data = load_data()
+
+    # Check new key doesn't already exist
+    all_existing = set()
+    for keys in data.get("keys", {}).values():
+        all_existing.update(keys)
+    for keys in data.get("keys_internal", {}).values():
+        all_existing.update(keys)
+    if new_key in all_existing:
+        await interaction.response.send_message("❌ That new key already exists.", ephemeral=True)
+        return
+
+    # Find and replace in keys
+    owner_uid = None
+    pool = None
+    for uid, keys in data.get("keys", {}).items():
+        if old_key in keys:
+            owner_uid = uid
+            pool = "keys"
+            keys.remove(old_key)
+            keys.append(new_key)
+            break
+    if not owner_uid:
+        for uid, keys in data.get("keys_internal", {}).items():
+            if old_key in keys:
+                owner_uid = uid
+                pool = "keys_internal"
+                keys.remove(old_key)
+                keys.append(new_key)
+                break
+
+    if not owner_uid:
+        await interaction.response.send_message("❌ Key not found.", ephemeral=True)
+        return
+
+    # Migrate all metadata from old key to new key
+    for field in ("key_expiry", "key_hwid", "key_created", "key_generated_by",
+                  "key_executions", "key_last_exec", "key_roblox_info"):
+        d = data.get(field, {})
+        if old_key in d:
+            d[new_key] = d.pop(old_key)
+
+    save_data(data)
+
+    owner = interaction.guild.get_member(int(owner_uid))
+    owner_str = owner.mention if owner else f"<@{owner_uid}>"
+
+    # DM the owner
+    try:
+        if owner:
+            dm = discord.Embed(title="🔑 Key Renamed", color=0xFF9900)
+            dm.add_field(name="Old Key", value=f"```{old_key}```", inline=False)
+            dm.add_field(name="New Key", value=f"```{new_key}```", inline=False)
+            dm.set_footer(text="Vyron.cc")
+            await owner.send(embed=dm)
+    except discord.Forbidden:
+        pass
+
+    embed = discord.Embed(title="🔑 Key Renamed", color=0xFF9900)
+    embed.add_field(name="Old Key", value=f"```{old_key}```", inline=False)
+    embed.add_field(name="New Key", value=f"```{new_key}```", inline=False)
+    embed.add_field(name="Owner", value=owner_str, inline=True)
+    embed.set_footer(text="Vyron.cc")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 # ─────────────────────────────────────────────
 
 @tree.command(name="kick", description="Kick a user from the server")
@@ -1256,22 +1337,22 @@ async def wipekeys(interaction: discord.Interaction, user: discord.Member):
 @app_commands.describe(
     user="The user to assign the key to",
     key="The custom key string (e.g. Vyron-MyCustomKey123)",
-    duration="Duration: e.g. 1h, 7d, 2w, 1m, lifetime"
+    duration="Duration: e.g. 1h, 7d, 2w, 1m, lifetime",
+    amount="Number of keys to generate with this prefix (1-10, appends _1 _2 etc if >1)"
 )
-async def customkey(interaction: discord.Interaction, user: discord.Member, key: str, duration: str = "lifetime"):
+async def customkey(interaction: discord.Interaction, user: discord.Member, key: str, duration: str = "lifetime", amount: int = 1):
     if not has_owner_role(interaction):
         return await deny(interaction)
 
     key = key.strip()
+    amount = max(1, min(10, amount))
 
     if not key:
         await interaction.response.send_message("❌ Key cannot be empty.", ephemeral=True)
         return
-
     if len(key) < 4:
         await interaction.response.send_message("❌ Key must be at least 4 characters.", ephemeral=True)
         return
-
     if len(key) > 64:
         await interaction.response.send_message("❌ Key must be 64 characters or less.", ephemeral=True)
         return
@@ -1282,8 +1363,6 @@ async def customkey(interaction: discord.Interaction, user: discord.Member, key:
         return
 
     data = load_data()
-
-    # Check if key already exists anywhere
     all_existing = set()
     for keys in data.get("keys", {}).values():
         all_existing.update(keys)
@@ -1293,39 +1372,52 @@ async def customkey(interaction: discord.Interaction, user: discord.Member, key:
         for t in tkeys:
             all_existing.add(t["key"])
 
-    if key in all_existing:
-        await interaction.response.send_message("❌ That key already exists. Choose a different one.", ephemeral=True)
-        return
+    # Build list of keys to create
+    keys_to_create = []
+    if amount == 1:
+        if key in all_existing:
+            await interaction.response.send_message("❌ That key already exists. Choose a different one.", ephemeral=True)
+            return
+        keys_to_create.append(key)
+    else:
+        for i in range(1, amount + 1):
+            candidate = f"{key}_{i}"
+            if candidate in all_existing:
+                await interaction.response.send_message(f"❌ Key `{candidate}` already exists. Choose a different prefix.", ephemeral=True)
+                return
+            keys_to_create.append(candidate)
 
     uid = str(user.id)
     expiry = int(time.time()) + secs if secs else None
-    data.setdefault("key_expiry", {})[key] = expiry
-    data.setdefault("key_created", {})[key] = int(time.time())
-    data.setdefault("key_generated_by", {})[key] = str(interaction.user.id)
-    data["keys"].setdefault(uid, []).append(key)
+    for k in keys_to_create:
+        data.setdefault("key_expiry", {})[k] = expiry
+        data.setdefault("key_created", {})[k] = int(time.time())
+        data.setdefault("key_generated_by", {})[k] = str(interaction.user.id)
+        data["keys"].setdefault(uid, []).append(k)
     save_data(data)
 
-    # DM the key to the user
-    dm_embed = discord.Embed(title="🔑 Vyron V2 Key", description=f"```{key}```", color=0x5080FF)
+    keys_text = "\n".join(f"```{k}```" for k in keys_to_create)
+    dm_embed = discord.Embed(title=f"🔑 Vyron V2 Key{'s' if amount > 1 else ''}", description=keys_text, color=0x5080FF)
     dm_embed.add_field(name="Duration", value=duration_label(secs), inline=True)
+    dm_embed.add_field(name="Count", value=str(amount), inline=True)
     if expiry:
         dm_embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=True)
     dm_embed.set_footer(text="Vyron.cc")
 
-    # Public response
     pub_embed = discord.Embed(
-        title="🔑 Custom Key Created",
-        description=f"{interaction.user.mention} created a custom key for {user.mention}.",
+        title=f"🔑 Custom Key{'s' if amount > 1 else ''} Created",
+        description=f"{interaction.user.mention} created {amount} custom key{'s' if amount > 1 else ''} for {user.mention}.",
         color=0x5080FF
     )
     pub_embed.add_field(name="Duration", value=duration_label(secs), inline=True)
+    pub_embed.add_field(name="Count", value=str(amount), inline=True)
     if expiry:
         pub_embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=True)
     pub_embed.set_footer(text="Vyron.cc")
 
     try:
         await user.send(embed=dm_embed)
-        pub_embed.description += "\n✅ Key sent via DM."
+        pub_embed.description += "\n✅ Key(s) sent via DM."
     except discord.Forbidden:
         pub_embed.description += "\n⚠️ Couldn't DM the user — they may have DMs disabled."
 
