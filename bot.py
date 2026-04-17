@@ -413,6 +413,7 @@ async def genv2key(interaction: discord.Interaction, duration: str = "lifetime",
         key = gen_key()
         data.setdefault("key_expiry", {})[key] = expiry
         data.setdefault("key_created", {})[key] = int(time.time())
+        data.setdefault("key_generated_by", {})[key] = uid
         data["keys"].setdefault(uid, []).append(key)
         generated_keys.append(key)
     
@@ -468,6 +469,7 @@ async def genv2keyto(interaction: discord.Interaction, user: discord.Member, dur
         key = gen_key()
         data.setdefault("key_expiry", {})[key] = expiry
         data.setdefault("key_created", {})[key] = int(time.time())
+        data.setdefault("key_generated_by", {})[key] = str(interaction.user.id)
         data["keys"].setdefault(uid, []).append(key)
         generated_keys.append(key)
     
@@ -1299,6 +1301,7 @@ async def customkey(interaction: discord.Interaction, user: discord.Member, key:
     expiry = int(time.time()) + secs if secs else None
     data.setdefault("key_expiry", {})[key] = expiry
     data.setdefault("key_created", {})[key] = int(time.time())
+    data.setdefault("key_generated_by", {})[key] = str(interaction.user.id)
     data["keys"].setdefault(uid, []).append(key)
     save_data(data)
 
@@ -2682,6 +2685,7 @@ async def genintkey(interaction: discord.Interaction, duration: str = "lifetime"
     expiry = int(time.time()) + secs if secs else None
     data.setdefault("key_expiry", {})[key] = expiry
     data.setdefault("key_created", {})[key] = int(time.time())
+    data.setdefault("key_generated_by", {})[key] = uid
     data.setdefault("keys_internal", {}).setdefault(uid, []).append(key)
     save_data(data)
     embed = discord.Embed(title="Vyron Internal Key", description=f"```{key}```", color=0x00AAFF)
@@ -2707,6 +2711,7 @@ async def genintkeyto(interaction: discord.Interaction, user: discord.Member, du
     expiry = int(time.time()) + secs if secs else None
     data.setdefault("key_expiry", {})[key] = expiry
     data.setdefault("key_created", {})[key] = int(time.time())
+    data.setdefault("key_generated_by", {})[key] = str(interaction.user.id)
     data.setdefault("keys_internal", {}).setdefault(uid, []).append(key)
     save_data(data)
     dm_embed = discord.Embed(title="Vyron Internal Key", description=f"```{key}```", color=0x00AAFF)
@@ -2882,6 +2887,227 @@ class InternalRedeemModal(discord.ui.Modal, title="Redeem Internal Key"):
         embed.add_field(name="Expires", value=expiry_str, inline=True)
         embed.set_footer(text="Vyron.cc • Internal")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ─────────────────────────────────────────────
+#  /lookup COMMAND
+# ─────────────────────────────────────────────
+
+async def _fetch_roblox_avatar(roblox_id: str) -> Optional[str]:
+    """Fetch the Roblox headshot thumbnail URL for a user ID. Returns None on failure."""
+    try:
+        import aiohttp
+        url = (
+            f"https://thumbnails.roblox.com/v1/users/avatar-headshot"
+            f"?userIds={roblox_id}&size=150x150&format=Png"
+        )
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    payload = await resp.json()
+                    return payload.get("data", [{}])[0].get("imageUrl")
+    except Exception:
+        pass
+    return None
+
+
+async def _lookup_key_data(key: str) -> Optional[dict]:
+    """Call the local /lookup API and return the parsed JSON, or None on failure."""
+    try:
+        import aiohttp
+        dashboard_pw = os.environ.get("DASHBOARD_PASSWORD", "vyron_admin")
+        api_base = os.environ.get("API_BASE", "http://localhost:8080")
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{api_base}/lookup",
+                params={"key": key},
+                headers={"X-Admin-Password": dashboard_pw},
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+    except Exception:
+        pass
+    return None
+
+
+def _build_lookup_embed(info: dict, guild: discord.Guild) -> discord.Embed:
+    """Build the rich lookup embed from a /lookup API response."""
+    now = int(time.time())
+
+    # Colour logic
+    if info.get("blacklisted"):
+        color = 0xFF4444
+    elif info.get("active"):
+        color = 0x00CC66
+    else:
+        color = 0x5080FF
+
+    embed = discord.Embed(title="🔍 Key Lookup", color=color)
+
+    # Key (monospace)
+    embed.add_field(name="Key", value=f"`{info['key']}`", inline=False)
+
+    # Type badge
+    type_map = {"external": "External", "internal": "Internal", "temp": "Temp"}
+    embed.add_field(name="Type", value=type_map.get(info.get("type", ""), info.get("type", "Unknown")), inline=True)
+
+    # Owner
+    owner_uid = info.get("owner_uid")
+    if owner_uid:
+        member = guild.get_member(int(owner_uid))
+        if member:
+            owner_val = f"{member.mention} — {member.display_name} (@{member.name})"
+        else:
+            owner_val = f"<@{owner_uid}>"
+    else:
+        owner_val = "Unknown"
+    embed.add_field(name="Owner", value=owner_val, inline=True)
+
+    # Generated by
+    gen_by = info.get("generated_by")
+    if gen_by:
+        gen_member = guild.get_member(int(gen_by))
+        gen_val = gen_member.mention if gen_member else f"<@{gen_by}>"
+    else:
+        gen_val = "N/A"
+    embed.add_field(name="Generated By", value=gen_val, inline=True)
+
+    # Created
+    created = info.get("created")
+    embed.add_field(name="Created", value=f"<t:{created}:R>" if created else "Unknown", inline=True)
+
+    # Expiry
+    expiry_str = info.get("expiry", "Unknown")
+    expiry_ts = info.get("expiry_ts")
+    if expiry_ts and expiry_str not in ("Lifetime", "Expired"):
+        expiry_val = f"{expiry_str} (<t:{expiry_ts}:R>)"
+    else:
+        expiry_val = expiry_str
+    embed.add_field(name="Expiry", value=expiry_val, inline=True)
+
+    # HWID
+    hwid = info.get("hwid") or "Not bound yet"
+    embed.add_field(name="HWID", value=f"`{hwid}`", inline=False)
+
+    # Roblox user
+    roblox_name = info.get("roblox_name", "")
+    roblox_id = info.get("roblox_id", "")
+    embed.add_field(
+        name="Roblox User",
+        value=roblox_name if roblox_name else "Not executed yet",
+        inline=True,
+    )
+
+    # Roblox profile link
+    if roblox_id:
+        embed.add_field(
+            name="Roblox Profile",
+            value=f"[View Profile](https://www.roblox.com/users/{roblox_id}/profile)",
+            inline=True,
+        )
+
+    # Last executed
+    last_exec = info.get("last_exec")
+    embed.add_field(
+        name="Last Executed",
+        value=f"<t:{last_exec}:R>" if last_exec else "Never",
+        inline=True,
+    )
+
+    # Active status
+    embed.add_field(
+        name="Currently Active",
+        value="🟢 Online" if info.get("active") else "⚫ Offline",
+        inline=True,
+    )
+
+    # Executions
+    embed.add_field(name="Executions", value=str(info.get("executions", 0)), inline=True)
+
+    # Blacklisted
+    if info.get("blacklisted"):
+        embed.add_field(name="Blacklisted", value="🚫 Yes", inline=True)
+
+    embed.set_footer(text="Vyron.cc")
+    return embed
+
+
+@tree.command(name="lookup", description="Look up a key or all keys for a user")
+@app_commands.describe(
+    key="The key to look up",
+    user="The Discord user whose keys to look up"
+)
+async def lookup(interaction: discord.Interaction, key: str = None, user: discord.Member = None):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    if not key and not user:
+        await interaction.response.send_message(
+            "❌ Provide at least one of `key` or `user`.", ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    if key:
+        # Single key lookup
+        info = await _lookup_key_data(key.strip())
+        if not info or "error" in info:
+            await interaction.followup.send(
+                f"❌ Key not found or API error: `{info.get('error', 'Unknown') if info else 'No response'}`",
+                ephemeral=True,
+            )
+            return
+
+        embed = _build_lookup_embed(info, interaction.guild)
+
+        # Fetch Roblox avatar thumbnail
+        roblox_id = info.get("roblox_id", "")
+        if roblox_id:
+            avatar_url = await _fetch_roblox_avatar(roblox_id)
+            if avatar_url:
+                embed.set_thumbnail(url=avatar_url)
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    else:
+        # User lookup — find all keys for this user
+        data = load_data()
+        uid = str(user.id)
+        all_keys = list(data.get("keys", {}).get(uid, []))
+        all_keys += list(data.get("keys_internal", {}).get(uid, []))
+        # Add temp keys
+        for t in data.get("temp_keys", {}).get(uid, []):
+            all_keys.append(t["key"])
+
+        if not all_keys:
+            await interaction.followup.send(
+                f"No keys found for {user.mention}.", ephemeral=True
+            )
+            return
+
+        embeds = []
+        for k in all_keys[:10]:  # cap at 10 to avoid hitting Discord limits
+            info = await _lookup_key_data(k)
+            if not info or "error" in info:
+                continue
+            embed = _build_lookup_embed(info, interaction.guild)
+            roblox_id = info.get("roblox_id", "")
+            if roblox_id:
+                avatar_url = await _fetch_roblox_avatar(roblox_id)
+                if avatar_url:
+                    embed.set_thumbnail(url=avatar_url)
+            embeds.append(embed)
+
+        if not embeds:
+            await interaction.followup.send(
+                f"Could not retrieve key data for {user.mention}.", ephemeral=True
+            )
+            return
+
+        # Discord allows up to 10 embeds per message
+        await interaction.followup.send(embeds=embeds[:10], ephemeral=True)
 
 
 @client.event
