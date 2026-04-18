@@ -2530,26 +2530,6 @@ class MemberMusicPlayModal(discord.ui.Modal, title="Play Music (Your Key)"):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 
-class MemberMusicStopModal(discord.ui.Modal, title="Stop Music (Your Key)"):
-    async def on_submit(self, interaction: discord.Interaction):
-        uid  = str(interaction.user.id)
-        await interaction.response.defer(ephemeral=True)
-
-        keys = _get_user_keys(uid)
-        if not keys:
-            await interaction.followup.send("❌ You don't have any active keys.", ephemeral=True)
-            return
-
-        stopped = sum(1 for k in keys if _send_music_cmd(k, "stop"))
-        embed = discord.Embed(
-            title="⏹ Music Stopped",
-            description=f"Stop queued for **{stopped}/{len(keys)}** of your key(s).",
-            color=0xAAAAAA,
-        )
-        embed.set_footer(text="Vyron.cc")
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-
 class MemberMusicPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -2572,11 +2552,20 @@ class MemberMusicPanelView(discord.ui.View):
 
     @discord.ui.button(label="⏹ Stop Music", style=discord.ButtonStyle.danger, custom_id="member_music_stop", row=0)
     async def stop_music(self, interaction: discord.Interaction, button: discord.ui.Button):
-        uid = str(interaction.user.id)
-        if not _get_user_keys(uid):
+        uid  = str(interaction.user.id)
+        keys = _get_user_keys(uid)
+        if not keys:
             await interaction.response.send_message("❌ You don't have any active keys.", ephemeral=True)
             return
-        await interaction.response.send_modal(MemberMusicStopModal())
+        await interaction.response.defer(ephemeral=True)
+        stopped = sum(1 for k in keys if _send_music_cmd(k, "stop"))
+        embed = discord.Embed(
+            title="⏹ Music Stopped",
+            description=f"Stop queued for **{stopped}/{len(keys)}** of your key(s).",
+            color=0xAAAAAA,
+        )
+        embed.set_footer(text="Vyron.cc")
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @tree.command(name="membermusic", description="Post the member music panel in this channel (Owner only)")
@@ -2601,6 +2590,83 @@ async def membermusic(interaction: discord.Interaction):
     await interaction.channel.send(embed=embed, view=view)
     await interaction.response.send_message("✅ Member music panel posted.", ephemeral=True)
 
+
+# ─────────────────────────────────────────────
+#  IN-GAME PLAYER COMMANDS
+# ─────────────────────────────────────────────
+
+def _send_kick(key: str, reason: str) -> bool:
+    api_secret = os.environ.get("API_SECRET", "vyron_secret")
+    import urllib.request as _ur
+    try:
+        payload = json.dumps({"key": key, "reason": reason, "secret": api_secret}).encode()
+        req = _ur.Request(f"{API_BASE}/kick", data=payload,
+                          headers={"Content-Type": "application/json"}, method="POST")
+        with _ur.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read()).get("success", False)
+    except Exception:
+        return False
+
+def _send_notify(key: str, message: str) -> bool:
+    api_secret = os.environ.get("API_SECRET", "vyron_secret")
+    import urllib.request as _ur
+    try:
+        payload = json.dumps({"key": key, "message": message, "secret": api_secret}).encode()
+        req = _ur.Request(f"{API_BASE}/notify", data=payload,
+                          headers={"Content-Type": "application/json"}, method="POST")
+        with _ur.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read()).get("success", False)
+    except Exception:
+        return False
+
+
+@tree.command(name="kickall", description="Kick everyone currently in-game with a fixed update message")
+async def kickall(interaction: discord.Interaction):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    await interaction.response.defer(ephemeral=True)
+    sessions = await _fetch_sessions()
+    if not sessions:
+        await interaction.followup.send("No active sessions to kick.", ephemeral=True)
+        return
+    reason = "Vyron Updated Please Rejoin From XIM."
+    kicked = sum(1 for s in sessions if _send_kick(s["key"], reason))
+    embed = discord.Embed(
+        title="👢 Kicked All Sessions",
+        description=f"Kicked **{kicked}/{len(sessions)}** active session(s).",
+        color=0xFF6600,
+    )
+    embed.add_field(name="Reason", value=reason, inline=False)
+    embed.set_footer(text="Vyron.cc")
+    await interaction.followup.send(embed=embed, ephemeral=True)
+    asyncio.create_task(send_webhook(embeds=[{
+        "title": "👢 Kick All Fired",
+        "color": 0xFF6600,
+        "fields": [
+            {"name": "By", "value": f"{interaction.user.mention} ({interaction.user})", "inline": True},
+            {"name": "Sessions kicked", "value": str(kicked), "inline": True},
+            {"name": "Reason", "value": reason, "inline": False},
+        ],
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }]))
+
+
+@tree.command(name="rejoinplayer", description="Force a player to rejoin by their key")
+@app_commands.describe(key="The player's key", reason="Optional rejoin message shown to them")
+async def rejoinplayer(interaction: discord.Interaction, key: str, reason: str = "Please rejoin the game."):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    await interaction.response.defer(ephemeral=True)
+    _send_notify(key, reason)
+    ok = _send_kick(key, reason)
+    embed = discord.Embed(
+        title="🔄 Rejoin Queued" if ok else "❌ Failed",
+        color=0x00CC66 if ok else 0xFF4444,
+    )
+    embed.add_field(name="Key", value=f"`{key[:24]}{'...' if len(key) > 24 else ''}`", inline=True)
+    embed.add_field(name="Message", value=reason, inline=False)
+    embed.set_footer(text="Vyron.cc • Will take effect within 5 seconds")
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @tree.command(name="activesessions", description="View all users currently running the script")
