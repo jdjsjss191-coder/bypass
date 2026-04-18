@@ -257,7 +257,7 @@ def check_key():
 
 @app.route("/heartbeat", methods=["GET", "POST"])
 def heartbeat():
-    """Called by the script every ~15s to keep session alive. Returns kick instruction if pending."""
+    """Called by the script every ~5s to keep session alive. Returns kick instruction if pending."""
     if request.method == "GET":
         key      = request.args.get("key", "").strip()
         hwid     = request.args.get("hwid", "").strip()
