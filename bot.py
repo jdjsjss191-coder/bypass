@@ -2471,6 +2471,147 @@ async def addmusicpanel(interaction: discord.Interaction):
     await interaction.response.send_message("✅ Music panel posted.", ephemeral=True)
 
 
+# ─────────────────────────────────────────────
+#  MEMBER MUSIC PANEL
+#  Any member can use /membermusic to control music on their own key(s) only.
+# ─────────────────────────────────────────────
+
+def _get_user_keys(uid: str) -> list[str]:
+    """Return all active (non-expired) keys belonging to a Discord user."""
+    data = load_data()
+    now  = int(time.time())
+    keys = []
+    for k in data.get("keys", {}).get(uid, []):
+        expiry = data.get("key_expiry", {}).get(k)
+        if expiry is None or expiry > now:
+            keys.append(k)
+    for k in data.get("keys_internal", {}).get(uid, []):
+        expiry = data.get("key_expiry", {}).get(k)
+        if expiry is None or expiry > now:
+            keys.append(k)
+    return keys
+
+
+class MemberMusicPlayModal(discord.ui.Modal, title="Play Music (Your Key)"):
+    sound_input = discord.ui.TextInput(
+        label="Sound Asset ID",
+        placeholder="e.g. 1837843615",
+        required=True,
+        max_length=20,
+    )
+
+    def __init__(self, uid: str, loop: bool = False):
+        super().__init__()
+        self.uid  = uid
+        self.loop = loop
+
+    async def on_submit(self, interaction: discord.Interaction):
+        sound_id = self.sound_input.value.strip()
+        if not sound_id.isdigit():
+            await interaction.response.send_message("❌ Sound ID must be a number.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        keys = _get_user_keys(self.uid)
+        if not keys:
+            await interaction.followup.send("❌ You don't have any active keys.", ephemeral=True)
+            return
+
+        sent = sum(1 for k in keys if _send_music_cmd(k, "play", sound_id, self.loop))
+        embed = discord.Embed(
+            title="🎵 Music Queued" if sent else "❌ Failed",
+            description=f"Queued for **{sent}/{len(keys)}** of your key(s).",
+            color=0x5080FF if sent else 0xFF4444,
+        )
+        embed.add_field(name="Sound ID", value=f"`{sound_id}`", inline=True)
+        embed.add_field(name="Loop", value="✅ Yes" if self.loop else "❌ No", inline=True)
+        embed.set_footer(text="Vyron.cc • Will play within 5 seconds")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+class MemberMusicStopModal(discord.ui.Modal, title="Stop Music (Your Key)"):
+    async def on_submit(self, interaction: discord.Interaction):
+        uid  = str(interaction.user.id)
+        await interaction.response.defer(ephemeral=True)
+
+        keys = _get_user_keys(uid)
+        if not keys:
+            await interaction.followup.send("❌ You don't have any active keys.", ephemeral=True)
+            return
+
+        stopped = sum(1 for k in keys if _send_music_cmd(k, "stop"))
+        embed = discord.Embed(
+            title="⏹ Music Stopped",
+            description=f"Stop queued for **{stopped}/{len(keys)}** of your key(s).",
+            color=0xAAAAAA,
+        )
+        embed.set_footer(text="Vyron.cc")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+class MemberMusicPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="▶ Play (No Loop)", style=discord.ButtonStyle.success, custom_id="member_music_play_once", row=0)
+    async def play_once(self, interaction: discord.Interaction, button: discord.ui.Button):
+        uid = str(interaction.user.id)
+        if not _get_user_keys(uid):
+            await interaction.response.send_message("❌ You don't have any active keys.", ephemeral=True)
+            return
+        await interaction.response.send_modal(MemberMusicPlayModal(uid=uid, loop=False))
+
+    @discord.ui.button(label="🔁 Play (Loop)", style=discord.ButtonStyle.primary, custom_id="member_music_play_loop", row=0)
+    async def play_loop(self, interaction: discord.Interaction, button: discord.ui.Button):
+        uid = str(interaction.user.id)
+        if not _get_user_keys(uid):
+            await interaction.response.send_message("❌ You don't have any active keys.", ephemeral=True)
+            return
+        await interaction.response.send_modal(MemberMusicPlayModal(uid=uid, loop=True))
+
+    @discord.ui.button(label="⏹ Stop Music", style=discord.ButtonStyle.danger, custom_id="member_music_stop", row=0)
+    async def stop_music(self, interaction: discord.Interaction, button: discord.ui.Button):
+        uid = str(interaction.user.id)
+        if not _get_user_keys(uid):
+            await interaction.response.send_message("❌ You don't have any active keys.", ephemeral=True)
+            return
+        await interaction.response.send_modal(MemberMusicStopModal())
+
+
+@tree.command(name="membermusic", description="Control music on your own key(s)")
+async def membermusic(interaction: discord.Interaction):
+    uid  = str(interaction.user.id)
+    keys = _get_user_keys(uid)
+
+    if not keys:
+        await interaction.response.send_message(
+            "❌ You don't have any active keys registered to your account.",
+            ephemeral=True,
+        )
+        return
+
+    key_list = "\n".join(f"`{k}`" for k in keys[:5])
+    if len(keys) > 5:
+        key_list += f"\n*...and {len(keys) - 5} more*"
+
+    embed = discord.Embed(
+        title="🎵 Your Music Control",
+        description=(
+            "Control in-game music for your own key(s) only.\n\n"
+            "**▶ Play (No Loop)** — play a sound once\n"
+            "**🔁 Play (Loop)** — play a sound on repeat\n"
+            "**⏹ Stop Music** — stop music\n\n"
+            f"**Your active key(s):**\n{key_list}"
+        ),
+        color=0x5080FF,
+    )
+    embed.set_footer(text="Vyron.cc • Only affects your own keys")
+
+    await interaction.response.send_message(embed=embed, view=MemberMusicPanelView(), ephemeral=True)
+
+
+
 @tree.command(name="activesessions", description="View all users currently running the script")
 async def activesessions(interaction: discord.Interaction):
     if not has_owner_role(interaction):
@@ -3211,6 +3352,7 @@ async def on_ready():
     client.add_view(CloseTicketView())
     client.add_view(InternalPanelView())
     client.add_view(MusicPanelView())
+    client.add_view(MemberMusicPanelView())
     # Start background expiry check loop
     asyncio.create_task(expiry_check_loop())
     # Start tamper alert polling loop
