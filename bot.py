@@ -2071,7 +2071,7 @@ class KickModal(discord.ui.Modal, title="Kick User"):
 
             if result.get("success"):
                 await interaction.response.send_message(
-                    f"✅ Kick queued for key `{self.key[:20]}...`\nReason: **{reason}**\nThey will be kicked within 15 seconds.",
+                    f"✅ Kick queued for key `{self.key[:20]}...`\nReason: **{reason}**\nThey will be kicked within 5 seconds.",
                     ephemeral=True
                 )
             else:
@@ -2142,7 +2142,7 @@ async def notifyuser(interaction: discord.Interaction, key: str, message: str, s
         if result.get("success"):
             embed = discord.Embed(
                 title="📨 Notification Queued",
-                description=f"Your message will appear in-game within 15 seconds.",
+                description=f"Your message will appear in-game within 5 seconds.",
                 color=0x5080FF
             )
             embed.add_field(name="Key", value=f"`{key[:24]}{'...' if len(key) > 24 else ''}`", inline=True)
@@ -2368,7 +2368,7 @@ class MusicPlayModal(discord.ui.Modal, title="Play Music"):
             embed.add_field(name="Key", value=f"`{key_val[:24]}{'...' if len(key_val) > 24 else ''}`", inline=True)
             embed.add_field(name="Sound ID", value=f"`{sound_id}`", inline=True)
             embed.add_field(name="Loop", value="✅ Yes" if self.loop else "❌ No", inline=True)
-            embed.set_footer(text="Vyron.cc • Will play within 15 seconds")
+            embed.set_footer(text="Vyron.cc • Will play within 5 seconds")
         else:
             # Broadcast to all active sessions
             sessions = await _fetch_sessions()
@@ -2383,7 +2383,7 @@ class MusicPlayModal(discord.ui.Modal, title="Play Music"):
             )
             embed.add_field(name="Sound ID", value=f"`{sound_id}`", inline=True)
             embed.add_field(name="Loop", value="✅ Yes" if self.loop else "❌ No", inline=True)
-            embed.set_footer(text="Vyron.cc • Will play within 15 seconds")
+            embed.set_footer(text="Vyron.cc • Will play within 5 seconds")
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -2627,7 +2627,7 @@ async def joinuserkey(interaction: discord.Interaction, my_key: str, target_key:
 
     embed = discord.Embed(
         title="🚀 Teleport Queued",
-        description="Your script will teleport you within **15 seconds**.",
+        description="Your script will teleport you within **5 seconds**.",
         color=0x00CC66,
     )
     embed.add_field(name="Target Key", value=f"`{target_key[:24]}{'...' if len(target_key) > 24 else ''}`", inline=True)
