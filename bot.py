@@ -2651,21 +2651,74 @@ async def kickall(interaction: discord.Interaction):
     }]))
 
 
-@tree.command(name="rejoinplayer", description="Force a player to rejoin by their key")
-@app_commands.describe(key="The player's key", reason="Optional rejoin message shown to them")
+@tree.command(name="rejoinplayer", description="Force a player to rejoin the exact server they are in by their key")
+@app_commands.describe(key="The player's key", reason="Optional message shown to them before rejoin")
 async def rejoinplayer(interaction: discord.Interaction, key: str, reason: str = "Please rejoin the game."):
     if not has_owner_role(interaction):
         return await deny(interaction)
     await interaction.response.defer(ephemeral=True)
-    _send_notify(key, reason)
-    ok = _send_kick(key, reason)
+
+    dashboard_password = os.environ.get("DASHBOARD_PASSWORD", "vyron_admin")
+    api_secret         = os.environ.get("API_SECRET", "vyron_secret")
+
+    # 1. Get their current server location
+    try:
+        req = urllib.request.Request(
+            f"{API_BASE}/location/{urllib.parse.quote(key.strip())}",
+            method="GET",
+            headers={"X-Admin-Password": dashboard_password},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            loc = json.loads(resp.read())
+    except Exception as e:
+        await interaction.followup.send(f"❌ Could not reach API: `{e}`", ephemeral=True)
+        return
+
+    if not loc.get("online"):
+        await interaction.followup.send("❌ That key is not in an active session right now.", ephemeral=True)
+        return
+
+    place_id = loc.get("place_id", "")
+    job_id   = loc.get("job_id", "")
+
+    if not place_id or not job_id:
+        await interaction.followup.send("❌ Could not retrieve server location for that key.", ephemeral=True)
+        return
+
+    # 2. Notify them
+    _send_notify(key.strip(), reason)
+
+    # 3. Kick them — the script will teleport them back via the stored place/job
+    # Queue a teleport to the same server first, then kick
+    try:
+        payload = json.dumps({
+            "key": key.strip(),
+            "place_id": place_id,
+            "job_id": job_id,
+            "secret": api_secret,
+        }).encode()
+        req = urllib.request.Request(
+            f"{API_BASE}/teleport",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            tp_result = json.loads(resp.read())
+    except Exception as e:
+        await interaction.followup.send(f"❌ Teleport queue failed: `{e}`", ephemeral=True)
+        return
+
+    ok = tp_result.get("success", False)
     embed = discord.Embed(
         title="🔄 Rejoin Queued" if ok else "❌ Failed",
         color=0x00CC66 if ok else 0xFF4444,
     )
-    embed.add_field(name="Key", value=f"`{key[:24]}{'...' if len(key) > 24 else ''}`", inline=True)
+    embed.add_field(name="Key", value=f"`{key.strip()[:24]}{'…' if len(key) > 24 else ''}`", inline=True)
+    embed.add_field(name="Place ID", value=f"`{place_id}`", inline=True)
+    embed.add_field(name="Job ID", value=f"`{job_id[:16]}…`", inline=True)
     embed.add_field(name="Message", value=reason, inline=False)
-    embed.set_footer(text="Vyron.cc • Will take effect within 5 seconds")
+    embed.set_footer(text="Vyron.cc • Will teleport to same server within 5 seconds")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
@@ -2685,40 +2738,66 @@ async def activesessions(interaction: discord.Interaction):
         return
 
     if not sessions:
-        await interaction.followup.send("No active sessions right now.", ephemeral=True)
+        embed = discord.Embed(
+            title="📡 Active Sessions",
+            description="```\nNo active sessions right now.\n```",
+            color=0x2b2d31,
+        )
+        embed.set_footer(text="Vyron.cc • 0 users online")
+        await interaction.followup.send(embed=embed, ephemeral=True)
         return
 
     now = int(time.time())
+
     embed = discord.Embed(
-        title="🟢 Active Script Sessions",
-        description=f"**{len(sessions)}** user(s) currently running Vyron",
-        color=0x00CC66
+        title="� Active Sessions",
+        color=0x5080FF,
+    )
+
+    # header bar
+    embed.description = (
+        f"```ansi\n\u001b[1;32m● {len(sessions)} user(s) online\u001b[0m\n```"
     )
 
     for i, s in enumerate(sessions[:10], 1):
         owner_uid = s.get("owner_uid")
         if owner_uid:
             member = interaction.guild.get_member(int(owner_uid))
-            owner_str = member.mention if member else f"<@{owner_uid}>"
+            owner_str = member.display_name if member else f"User {owner_uid}"
+            mention   = member.mention if member else f"<@{owner_uid}>"
         else:
             owner_str = "Unknown"
+            mention   = "Unknown"
 
-        last_seen = s.get("last_seen", 0)
-        ago = now - last_seen
+        ago = now - s.get("last_seen", now)
         if ago < 60:
             seen_str = f"{ago}s ago"
-        else:
+        elif ago < 3600:
             seen_str = f"{ago // 60}m ago"
+        else:
+            seen_str = f"{ago // 3600}h ago"
 
-        key_display = s["key"][:20] + "..." if len(s["key"]) > 20 else s["key"]
+        expiry = s.get("expiry", "?")
+        key_short = s["key"][:22] + "…"
+
+        place_id = s.get("place_id", "")
+        job_id   = s.get("job_id", "")
+        server_line = f"🌐 `{place_id}` / `{job_id[:12]}…`" if place_id and job_id else "🌐 Location unknown"
 
         embed.add_field(
-            name=f"#{i} — {owner_str}",
-            value=f"🔑 `{key_display}`\n⏳ Expires: {s.get('expiry', 'Unknown')}\n🕐 Last seen: {seen_str}",
-            inline=False
+            name=f"{'🟢' if ago < 15 else '🟡' if ago < 40 else '🔴'} #{i}  {owner_str}",
+            value=(
+                f"👤 {mention}\n"
+                f"🔑 `{key_short}`\n"
+                f"⏳ Expires: **{expiry}**\n"
+                f"🕐 Last ping: **{seen_str}**\n"
+                f"{server_line}"
+            ),
+            inline=True,
         )
 
-    embed.set_footer(text="Vyron.cc • Click Kick # to remove a user")
+    embed.set_footer(text=f"Vyron.cc • {len(sessions)} session(s) • refreshed just now")
+    embed.timestamp = discord.utils.utcnow()
 
     view = SessionsView(sessions)
     await interaction.followup.send(embed=embed, view=view, ephemeral=True)
