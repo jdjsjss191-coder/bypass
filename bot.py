@@ -2579,36 +2579,27 @@ class MemberMusicPanelView(discord.ui.View):
         await interaction.response.send_modal(MemberMusicStopModal())
 
 
-@tree.command(name="membermusic", description="Control music on your own key(s)")
+@tree.command(name="membermusic", description="Post the member music panel in this channel (Owner only)")
 async def membermusic(interaction: discord.Interaction):
-    uid  = str(interaction.user.id)
-    keys = _get_user_keys(uid)
-
-    if not keys:
-        await interaction.response.send_message(
-            "❌ You don't have any active keys registered to your account.",
-            ephemeral=True,
-        )
-        return
-
-    key_list = "\n".join(f"`{k}`" for k in keys[:5])
-    if len(keys) > 5:
-        key_list += f"\n*...and {len(keys) - 5} more*"
+    if not has_owner_role(interaction):
+        return await deny(interaction)
 
     embed = discord.Embed(
-        title="🎵 Your Music Control",
+        title="🎵 Member Music Control",
         description=(
-            "Control in-game music for your own key(s) only.\n\n"
+            "Play music in-game on your own key(s).\n\n"
             "**▶ Play (No Loop)** — play a sound once\n"
             "**🔁 Play (Loop)** — play a sound on repeat\n"
-            "**⏹ Stop Music** — stop music\n\n"
-            f"**Your active key(s):**\n{key_list}"
+            "**⏹ Stop Music** — stop your music\n\n"
+            "Buttons only affect keys registered to **your** Discord account."
         ),
         color=0x5080FF,
     )
     embed.set_footer(text="Vyron.cc • Only affects your own keys")
 
-    await interaction.response.send_message(embed=embed, view=MemberMusicPanelView(), ephemeral=True)
+    view = MemberMusicPanelView()
+    await interaction.channel.send(embed=embed, view=view)
+    await interaction.response.send_message("✅ Member music panel posted.", ephemeral=True)
 
 
 
