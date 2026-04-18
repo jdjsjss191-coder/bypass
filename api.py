@@ -441,6 +441,7 @@ def get_pending_tampers():
 
 
 
+@app.route("/kick", methods=["POST"])
 def kick_session():
     """Queue a kick for a key. Called by the bot."""
     body = request.get_json(force=True) or {}
