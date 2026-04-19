@@ -56,6 +56,10 @@ pending_music_lock = threading.Lock()
 pending_teleport: dict = {}
 pending_teleport_lock = threading.Lock()
 
+# Frozen keys: set of keys currently frozen (persistent until unfreeze)
+frozen_keys: set = set()
+frozen_keys_lock = threading.Lock()
+
 SESSION_TIMEOUT = 60  # seconds before a session is considered inactive
 
 DISCORD_INVITE = os.environ.get("DISCORD_INVITE", "https://discord.gg/RzCyAwnMqa")
@@ -329,6 +333,13 @@ def heartbeat():
                 "teleport_job_id":   tp.get("job_id", ""),
             }), 200
 
+    # Check freeze state — persistent, does NOT pop (stays until unfreeze)
+    with frozen_keys_lock:
+        is_frozen = key in frozen_keys
+
+    if is_frozen:
+        return jsonify({"kick": False, "notify": False, "freeze": True}), 200
+
     return jsonify({"kick": False, "notify": False}), 200
 
 
@@ -524,6 +535,42 @@ def teleport_session():
 
     with pending_teleport_lock:
         pending_teleport[key] = {"place_id": place_id, "job_id": job_id}
+
+    return jsonify({"success": True}), 200
+
+
+@app.route("/freeze", methods=["POST"])
+def freeze_session():
+    """Freeze a key — sets walkspeed to 1 until unfrozen. Called by the bot."""
+    body   = request.get_json(force=True) or {}
+    key    = body.get("key", "").strip()
+    secret = body.get("secret", "").strip()
+
+    if secret != API_SECRET:
+        return jsonify({"success": False, "reason": "Unauthorized"}), 403
+    if not key:
+        return jsonify({"success": False, "reason": "Missing key"}), 400
+
+    with frozen_keys_lock:
+        frozen_keys.add(key)
+
+    return jsonify({"success": True}), 200
+
+
+@app.route("/unfreeze", methods=["POST"])
+def unfreeze_session():
+    """Unfreeze a key — restores normal walkspeed. Called by the bot."""
+    body   = request.get_json(force=True) or {}
+    key    = body.get("key", "").strip()
+    secret = body.get("secret", "").strip()
+
+    if secret != API_SECRET:
+        return jsonify({"success": False, "reason": "Unauthorized"}), 403
+    if not key:
+        return jsonify({"success": False, "reason": "Missing key"}), 400
+
+    with frozen_keys_lock:
+        frozen_keys.discard(key)
 
     return jsonify({"success": True}), 200
 
