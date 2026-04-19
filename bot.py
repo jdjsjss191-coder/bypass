@@ -3603,4 +3603,302 @@ async def send_tamper_alert(report: dict):
 
     await channel.send(embed=embed)
 
+
+# ─────────────────────────────────────────────
+#  KICK IN-GAME
+# ─────────────────────────────────────────────
+
+@tree.command(name="kickingame", description="Kick a specific key from in-game with a custom reason")
+@app_commands.describe(key="The player's key", reason="Reason shown to them on kick")
+async def kickingame(interaction: discord.Interaction, key: str, reason: str = "You have been kicked by staff."):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    await interaction.response.defer(ephemeral=True)
+
+    ok = _send_kick(key.strip(), reason.strip())
+    embed = discord.Embed(
+        title="👢 In-Game Kick Queued" if ok else "❌ Kick Failed",
+        color=0xFF6600 if ok else 0xFF4444,
+    )
+    embed.add_field(name="Key", value=f"`{key.strip()[:24]}{'…' if len(key) > 24 else ''}`", inline=True)
+    embed.add_field(name="Reason", value=reason, inline=False)
+    if ok:
+        embed.set_footer(text="Vyron.cc • Will kick within 5 seconds")
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+    if ok:
+        asyncio.create_task(send_webhook(embeds=[{
+            "title": "👢 In-Game Kick",
+            "color": 0xFF6600,
+            "fields": [
+                {"name": "By", "value": f"{interaction.user.mention} ({interaction.user})", "inline": True},
+                {"name": "Key", "value": f"`{key.strip()}`", "inline": True},
+                {"name": "Reason", "value": reason, "inline": False},
+            ],
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }]))
+
+
+# ─────────────────────────────────────────────
+#  TELEPORT PLAYER
+# ─────────────────────────────────────────────
+
+def _get_location(key: str) -> dict | None:
+    """Fetch the current place_id + job_id for a key. Returns None on failure."""
+    dashboard_password = os.environ.get("DASHBOARD_PASSWORD", "vyron_admin")
+    import urllib.request as _ur, urllib.parse as _up
+    try:
+        req = _ur.Request(
+            f"{API_BASE}/location/{_up.quote(key.strip())}",
+            method="GET",
+            headers={"X-Admin-Password": dashboard_password},
+        )
+        with _ur.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read())
+    except Exception:
+        return None
+
+def _send_teleport(key: str, place_id: str, job_id: str) -> bool:
+    api_secret = os.environ.get("API_SECRET", "vyron_secret")
+    import urllib.request as _ur
+    try:
+        payload = json.dumps({
+            "key": key, "place_id": place_id,
+            "job_id": job_id, "secret": api_secret,
+        }).encode()
+        req = _ur.Request(f"{API_BASE}/teleport", data=payload,
+                          headers={"Content-Type": "application/json"}, method="POST")
+        with _ur.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read()).get("success", False)
+    except Exception:
+        return False
+
+
+@tree.command(name="teleportplayer", description="Teleport a player to you, or teleport yourself to them")
+@app_commands.describe(
+    target_key="The key of the player to move",
+    direction="'tome' = bring them to you  |  'tothem' = send yourself to them",
+    your_key="Your own key (required when direction is 'tothem')",
+)
+@app_commands.choices(direction=[
+    app_commands.Choice(name="Bring them to me (tome)", value="tome"),
+    app_commands.Choice(name="Send me to them (tothem)", value="tothem"),
+])
+async def teleportplayer(
+    interaction: discord.Interaction,
+    target_key: str,
+    direction: app_commands.Choice[str],
+    your_key: str = "",
+):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    await interaction.response.defer(ephemeral=True)
+
+    target_key = target_key.strip()
+    your_key   = your_key.strip()
+
+    # Get target's location
+    target_loc = _get_location(target_key)
+    if not target_loc or not target_loc.get("online"):
+        await interaction.followup.send("❌ Target key is not in an active session.", ephemeral=True)
+        return
+
+    target_place = target_loc.get("place_id", "")
+    target_job   = target_loc.get("job_id", "")
+
+    if direction.value == "tothem":
+        # Send YOUR key to their server
+        if not your_key:
+            await interaction.followup.send("❌ You must provide your own key when using 'tothem'.", ephemeral=True)
+            return
+        ok = _send_teleport(your_key, target_place, target_job)
+        label = "You → Them"
+        moved_key = your_key
+        dest_key  = target_key
+    else:
+        # Bring THEM to your server — need your location
+        if not your_key:
+            await interaction.followup.send("❌ You must provide your own key so we know your server.", ephemeral=True)
+            return
+        your_loc = _get_location(your_key)
+        if not your_loc or not your_loc.get("online"):
+            await interaction.followup.send("❌ Your key is not in an active session.", ephemeral=True)
+            return
+        your_place = your_loc.get("place_id", "")
+        your_job   = your_loc.get("job_id", "")
+        ok = _send_teleport(target_key, your_place, your_job)
+        label = "Them → You"
+        moved_key = target_key
+        dest_key  = your_key
+
+    embed = discord.Embed(
+        title=f"🌀 Teleport Queued ({label})" if ok else "❌ Teleport Failed",
+        color=0x00CC66 if ok else 0xFF4444,
+    )
+    embed.add_field(name="Moving Key", value=f"`{moved_key[:24]}{'…' if len(moved_key) > 24 else ''}`", inline=True)
+    embed.add_field(name="Destination Key", value=f"`{dest_key[:24]}{'…' if len(dest_key) > 24 else ''}`", inline=True)
+    embed.add_field(name="Direction", value=label, inline=True)
+    if ok:
+        embed.set_footer(text="Vyron.cc • Will teleport within 5 seconds")
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+# ─────────────────────────────────────────────
+#  FREEZE PLAYER  (notification spam loop)
+# ─────────────────────────────────────────────
+
+# Track active freezes so we can unfreeze: key -> asyncio.Task
+_freeze_tasks: dict[str, asyncio.Task] = {}
+
+@tree.command(name="freezeplayer", description="Spam a player with notifications every second to freeze/distract them")
+@app_commands.describe(
+    key="The player's key",
+    message="Message to spam (default: 🔒 You are frozen)",
+    duration="How many seconds to freeze them (1-60, default 10)",
+)
+async def freezeplayer(interaction: discord.Interaction, key: str, message: str = "🔒 You are frozen", duration: int = 10):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    duration = max(1, min(60, duration))
+    key = key.strip()
+
+    if key in _freeze_tasks and not _freeze_tasks[key].done():
+        await interaction.response.send_message("❌ That key is already frozen. Use `/unfreezeplayer` first.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    async def _freeze_loop():
+        for _ in range(duration):
+            _send_notify(key, message)
+            await asyncio.sleep(1)
+        _freeze_tasks.pop(key, None)
+
+    task = asyncio.create_task(_freeze_loop())
+    _freeze_tasks[key] = task
+
+    embed = discord.Embed(
+        title="🧊 Player Frozen",
+        description=f"Spamming **{duration}** notifications, 1 per second.",
+        color=0x88CCFF,
+    )
+    embed.add_field(name="Key", value=f"`{key[:24]}{'…' if len(key) > 24 else ''}`", inline=True)
+    embed.add_field(name="Duration", value=f"{duration}s", inline=True)
+    embed.add_field(name="Message", value=message, inline=False)
+    embed.set_footer(text="Vyron.cc • Use /unfreezeplayer to stop early")
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@tree.command(name="unfreezeplayer", description="Stop an active freeze on a player early")
+@app_commands.describe(key="The player's key to unfreeze")
+async def unfreezeplayer(interaction: discord.Interaction, key: str):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+
+    key = key.strip()
+    task = _freeze_tasks.get(key)
+    if not task or task.done():
+        await interaction.response.send_message("❌ No active freeze found for that key.", ephemeral=True)
+        return
+
+    task.cancel()
+    _freeze_tasks.pop(key, None)
+    await interaction.response.send_message(f"✅ Freeze cancelled for `{key[:24]}{'…' if len(key) > 24 else ''}`.", ephemeral=True)
+
+
+# ─────────────────────────────────────────────
+#  SESSION INFO
+# ─────────────────────────────────────────────
+
+@tree.command(name="sessioninfo", description="Get detailed info on a specific key's active session")
+@app_commands.describe(key="The key to look up")
+async def sessioninfo(interaction: discord.Interaction, key: str):
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    await interaction.response.defer(ephemeral=True)
+
+    key = key.strip()
+    loc = _get_location(key)
+
+    if not loc:
+        await interaction.followup.send("❌ Could not reach API.", ephemeral=True)
+        return
+
+    if not loc.get("online"):
+        embed = discord.Embed(
+            title="📡 Session Info",
+            description=f"`{key[:24]}{'…' if len(key) > 24 else ''}` is **not online** right now.",
+            color=0x555555,
+        )
+        embed.set_footer(text="Vyron.cc")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        return
+
+    data = load_data()
+    # Find Discord owner
+    owner_uid = None
+    for uid, keys in data.get("keys", {}).items():
+        if key in keys:
+            owner_uid = uid
+            break
+    if not owner_uid:
+        for uid, keys in data.get("keys_internal", {}).items():
+            if key in keys:
+                owner_uid = uid
+                break
+
+    member = interaction.guild.get_member(int(owner_uid)) if owner_uid else None
+    owner_str = member.mention if member else (f"<@{owner_uid}>" if owner_uid else "Unknown")
+
+    last_seen = loc.get("last_seen", 0)
+    place_id  = loc.get("place_id", "N/A")
+    job_id    = loc.get("job_id", "N/A")
+
+    # Key expiry
+    expiry = data.get("key_expiry", {}).get(key)
+    now = int(time.time())
+    if expiry is None:
+        expiry_str = "Lifetime"
+    elif now > expiry:
+        expiry_str = "⚠️ Expired"
+    else:
+        secs_left = expiry - now
+        if secs_left < 3600:
+            expiry_str = f"{secs_left // 60}m left"
+        elif secs_left < 86400:
+            expiry_str = f"{secs_left // 3600}h left"
+        else:
+            expiry_str = f"{secs_left // 86400}d left"
+
+    # Roblox info
+    roblox_info = data.get("key_roblox_info", {}).get(key, {})
+    roblox_name = roblox_info.get("name", "N/A")
+    roblox_id   = roblox_info.get("id", "N/A")
+
+    # Executions
+    executions = data.get("key_executions", {}).get(key, 0)
+
+    embed = discord.Embed(
+        title="📡 Session Info",
+        color=0x00CC66,
+    )
+    embed.add_field(name="Key", value=f"```{key}```", inline=False)
+    embed.add_field(name="Discord Owner", value=owner_str, inline=True)
+    embed.add_field(name="Key Expiry", value=expiry_str, inline=True)
+    embed.add_field(name="Last Seen", value=f"<t:{last_seen}:R>", inline=True)
+    embed.add_field(name="Roblox Username", value=roblox_name, inline=True)
+    embed.add_field(name="Roblox ID", value=roblox_id, inline=True)
+    embed.add_field(name="Total Executions", value=str(executions), inline=True)
+    embed.add_field(name="Place ID", value=f"`{place_id}`", inline=True)
+    embed.add_field(name="Job ID", value=f"`{job_id[:20]}{'…' if len(str(job_id)) > 20 else ''}`", inline=True)
+    embed.add_field(
+        name="Server Link",
+        value=f"[Join Server](https://www.roblox.com/games/{place_id}?gameInstanceId={job_id})" if place_id != "N/A" else "N/A",
+        inline=False,
+    )
+    embed.set_footer(text="Vyron.cc")
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
 client.run(TOKEN)
