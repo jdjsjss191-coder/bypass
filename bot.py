@@ -3747,64 +3747,87 @@ async def teleportplayer(
 #  FREEZE PLAYER  (notification spam loop)
 # ─────────────────────────────────────────────
 
-# Track active freezes so we can unfreeze: key -> asyncio.Task
-_freeze_tasks: dict[str, asyncio.Task] = {}
+# ─────────────────────────────────────────────
+#  FREEZE PLAYER
+# ─────────────────────────────────────────────
 
-@tree.command(name="freezeplayer", description="Spam a player with notifications every second to freeze/distract them")
-@app_commands.describe(
-    key="The player's key",
-    message="Message to spam (default: 🔒 You are frozen)",
-    duration="How many seconds to freeze them (1-60, default 10)",
-)
-async def freezeplayer(interaction: discord.Interaction, key: str, message: str = "🔒 You are frozen", duration: int = 10):
+# Track which keys we've frozen so unfreeze knows
+_frozen_by_bot: set = set()
+
+def _send_freeze(key: str) -> bool:
+    api_secret = os.environ.get("API_SECRET", "vyron_secret")
+    import urllib.request as _ur
+    try:
+        payload = json.dumps({"key": key, "secret": api_secret}).encode()
+        req = _ur.Request(f"{API_BASE}/freeze", data=payload,
+                          headers={"Content-Type": "application/json"}, method="POST")
+        with _ur.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read()).get("success", False)
+    except Exception:
+        return False
+
+def _send_unfreeze(key: str) -> bool:
+    api_secret = os.environ.get("API_SECRET", "vyron_secret")
+    import urllib.request as _ur
+    try:
+        payload = json.dumps({"key": key, "secret": api_secret}).encode()
+        req = _ur.Request(f"{API_BASE}/unfreeze", data=payload,
+                          headers={"Content-Type": "application/json"}, method="POST")
+        with _ur.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read()).get("success", False)
+    except Exception:
+        return False
+
+
+@tree.command(name="freezeplayer", description="Freeze a player in-game — sets their walkspeed to 1 until you unfreeze them")
+@app_commands.describe(key="The player's key")
+async def freezeplayer(interaction: discord.Interaction, key: str):
     if not has_owner_role(interaction):
         return await deny(interaction)
 
-    duration = max(1, min(60, duration))
     key = key.strip()
 
-    if key in _freeze_tasks and not _freeze_tasks[key].done():
-        await interaction.response.send_message("❌ That key is already frozen. Use `/unfreezeplayer` first.", ephemeral=True)
+    if key in _frozen_by_bot:
+        await interaction.response.send_message("❌ That key is already frozen. Use `/unfreezeplayer` to unfreeze.", ephemeral=True)
         return
 
-    await interaction.response.defer(ephemeral=True)
-
-    async def _freeze_loop():
-        for _ in range(duration):
-            _send_notify(key, message)
-            await asyncio.sleep(1)
-        _freeze_tasks.pop(key, None)
-
-    task = asyncio.create_task(_freeze_loop())
-    _freeze_tasks[key] = task
+    ok = _send_freeze(key)
+    if ok:
+        _frozen_by_bot.add(key)
 
     embed = discord.Embed(
-        title="🧊 Player Frozen",
-        description=f"Spamming **{duration}** notifications, 1 per second.",
-        color=0x88CCFF,
+        title="🧊 Player Frozen" if ok else "❌ Freeze Failed",
+        description="Their walkspeed is now set to **1** and will stay that way until you unfreeze them." if ok else "Could not reach the API.",
+        color=0x88CCFF if ok else 0xFF4444,
     )
     embed.add_field(name="Key", value=f"`{key[:24]}{'…' if len(key) > 24 else ''}`", inline=True)
-    embed.add_field(name="Duration", value=f"{duration}s", inline=True)
-    embed.add_field(name="Message", value=message, inline=False)
-    embed.set_footer(text="Vyron.cc • Use /unfreezeplayer to stop early")
-    await interaction.followup.send(embed=embed, ephemeral=True)
+    if ok:
+        embed.set_footer(text="Vyron.cc • Use /unfreezeplayer to restore")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@tree.command(name="unfreezeplayer", description="Stop an active freeze on a player early")
+@tree.command(name="unfreezeplayer", description="Unfreeze a player and restore their normal walkspeed")
 @app_commands.describe(key="The player's key to unfreeze")
 async def unfreezeplayer(interaction: discord.Interaction, key: str):
     if not has_owner_role(interaction):
         return await deny(interaction)
 
     key = key.strip()
-    task = _freeze_tasks.get(key)
-    if not task or task.done():
-        await interaction.response.send_message("❌ No active freeze found for that key.", ephemeral=True)
+
+    if key not in _frozen_by_bot:
+        await interaction.response.send_message("❌ That key is not currently frozen.", ephemeral=True)
         return
 
-    task.cancel()
-    _freeze_tasks.pop(key, None)
-    await interaction.response.send_message(f"✅ Freeze cancelled for `{key[:24]}{'…' if len(key) > 24 else ''}`.", ephemeral=True)
+    ok = _send_unfreeze(key)
+    if ok:
+        _frozen_by_bot.discard(key)
+
+    embed = discord.Embed(
+        title="✅ Player Unfrozen" if ok else "❌ Unfreeze Failed",
+        color=0x00CC66 if ok else 0xFF4444,
+    )
+    embed.add_field(name="Key", value=f"`{key[:24]}{'…' if len(key) > 24 else ''}`", inline=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # ─────────────────────────────────────────────
