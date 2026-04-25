@@ -9,7 +9,7 @@ import asyncio
 from typing import Optional
 from api import start_api_thread
 
-TOKEN = os.environ["TOKEN"]
+# Don't access TOKEN at module level - will be accessed in main block with error handling
 ANNOUNCE_CHANNEL_ID = int(os.environ.get("ANNOUNCE_CHANNEL", "0"))
 OWNER_ROLE_NAME = os.environ.get("OWNER_ROLE", "Owner")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
@@ -4666,10 +4666,23 @@ if __name__ == "__main__":
     import time
     time.sleep(2)
     
-    # Try to start the bot with error handling
+    # Try to get TOKEN and start the bot with error handling
     try:
+        TOKEN = os.environ["TOKEN"]  # Get token safely inside try block
         print("Starting Discord bot...")
         client.run(TOKEN)
+    except KeyError:
+        print("❌ TOKEN environment variable not set!")
+        print("API server will continue running without Discord bot...")
+        # Keep the API running even if TOKEN is missing
+        try:
+            from api import run_api
+            print("Running API server directly...")
+            run_api()
+        except KeyboardInterrupt:
+            print("Shutting down...")
+        except Exception as api_error:
+            print(f"API server error: {api_error}")
     except Exception as e:
         print(f"Bot failed to start: {e}")
         print("API server will continue running...")
@@ -4684,5 +4697,11 @@ if __name__ == "__main__":
         except Exception as api_error:
             print(f"API server error: {api_error}")
 else:
-    # If imported, just run the bot normally
-    client.run(TOKEN)
+    # If imported, try to get token safely
+    try:
+        TOKEN = os.environ["TOKEN"]
+        client.run(TOKEN)
+    except KeyError:
+        print("❌ TOKEN environment variable not set!")
+    except Exception as e:
+        print(f"Bot failed to start: {e}")
