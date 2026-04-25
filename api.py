@@ -542,14 +542,14 @@ def teleport_session():
     body     = request.get_json(force=True) or {}
     key      = body.get("key", "").strip()
     place_id = str(body.get("place_id", "")).strip()
-    job_id   = str(body.get("job_id", "")).strip()
+    job_id   = str(body.get("job_id", "")).strip()  # optional — empty = join any server
     secret   = body.get("secret", "").strip()
 
     if secret != API_SECRET:
         return jsonify({"success": False, "reason": "Unauthorized"}), 403
 
-    if not key or not place_id or not job_id:
-        return jsonify({"success": False, "reason": "Missing key, place_id, or job_id"}), 400
+    if not key or not place_id:
+        return jsonify({"success": False, "reason": "Missing key or place_id"}), 400
 
     with pending_teleport_lock:
         pending_teleport[key] = {"place_id": place_id, "job_id": job_id}
