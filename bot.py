@@ -4656,48 +4656,35 @@ async def serverstats(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
-# Start API server first, then try to start bot
+# Bot startup function
+def start_bot():
+    """Start the Discord bot safely."""
+    TOKEN = os.environ.get("TOKEN")
+    if not TOKEN:
+        raise ValueError("TOKEN environment variable not set")
+    print("🤖 Starting Discord bot...")
+    client.run(TOKEN)
+
+# Main execution
 if __name__ == "__main__":
-    # Always start the API server first
-    print("Starting API server...")
+    # If bot.py is run directly, start both API and bot
+    print("🚀 Starting Vyron Bot...")
+    print("🌐 Starting API server...")
     start_api_thread()
     
     # Give API a moment to start
     import time
     time.sleep(2)
     
-    # Try to get TOKEN and start the bot with error handling
+    # Start bot
     try:
-        TOKEN = os.environ["TOKEN"]  # Get token safely inside try block
-        print("Starting Discord bot...")
-        client.run(TOKEN)
-    except KeyError:
-        print("❌ TOKEN environment variable not set!")
-        print("API server will continue running without Discord bot...")
-        # Keep the API running even if TOKEN is missing
-        try:
-            from api import run_api
-            print("Running API server directly...")
-            run_api()
-        except KeyboardInterrupt:
-            print("Shutting down...")
-        except Exception as api_error:
-            print(f"API server error: {api_error}")
+        start_bot()
     except Exception as e:
-        print(f"Bot failed to start: {e}")
-        print("API server will continue running...")
-        
-        # Keep the API running even if bot fails
-        try:
-            from api import run_api
-            print("Running API server directly...")
-            run_api()
-        except KeyboardInterrupt:
-            print("Shutting down...")
-        except Exception as api_error:
-            print(f"API server error: {api_error}")
-else:
-    # If imported, try to get token safely
+        print(f"❌ Bot failed: {e}")
+        print("🌐 API server will continue running...")
+        # Keep API running
+        from api import run_api
+        run_api()
     try:
         TOKEN = os.environ["TOKEN"]
         client.run(TOKEN)
