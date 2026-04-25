@@ -1757,7 +1757,7 @@ class ImprovedKeyPanelView(discord.ui.View):
     @discord.ui.button(label="Get Script", style=discord.ButtonStyle.primary, custom_id="panel_script", row=0)
     async def get_script(self, interaction: discord.Interaction, button: discord.ui.Button):
         source_token = os.environ.get("SOURCE_TOKEN", "")
-        script_url = f"https://bypass-production-5fff.up.railway.app/source?token={source_token}"
+        script_url = f"https://bypass-production-954a.up.railway.app/source?token={source_token}"
         
         embed = discord.Embed(
             title="Vyron Script",
