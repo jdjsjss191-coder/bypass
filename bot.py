@@ -3070,6 +3070,63 @@ def _send_notify(key: str, message: str) -> bool:
         return False
 
 
+@tree.command(name="senttogame", description="Force a user to join a Roblox game by their key and place ID")
+@app_commands.describe(
+    key="The key of the user to teleport",
+    place_id="The Roblox place ID to send them to"
+)
+async def senttogame(interaction: discord.Interaction, key: str, place_id: str):
+    # Double lock: must have Owner role AND be v9pv
+    if not has_owner_role(interaction):
+        return await deny(interaction)
+    if str(interaction.user).lower().split("#")[0] != "v9pv":
+        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+        return
+
+    key = key.strip()
+    place_id = place_id.strip()
+
+    if not place_id.isdigit():
+        await interaction.response.send_message("Invalid place ID. Must be a number.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    api_secret = os.environ.get("API_SECRET", "vyron_secret")
+
+    try:
+        payload = json.dumps({
+            "key": key,
+            "place_id": place_id,
+            "job_id": "",  # empty = join any available server
+            "secret": api_secret
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{API_BASE}/teleport",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            result = json.loads(resp.read())
+    except Exception as e:
+        await interaction.followup.send(f"Error contacting API: `{e}`", ephemeral=True)
+        return
+
+    if result.get("success"):
+        embed = discord.Embed(
+            title="Teleport Queued",
+            description="User will be sent to the game within 5 seconds.",
+            color=0x57F287
+        )
+        embed.add_field(name="Key", value=f"`{key[:24]}{'...' if len(key) > 24 else ''}`", inline=True)
+        embed.add_field(name="Place ID", value=f"`{place_id}`", inline=True)
+        embed.set_footer(text="Vyron.cc")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    else:
+        await interaction.followup.send(f"Failed: {result.get('reason', 'Unknown error')}", ephemeral=True)
+
+
 @tree.command(name="kickall", description="Kick everyone currently in-game with a fixed update message")
 async def kickall(interaction: discord.Interaction):
     if not has_owner_role(interaction):
