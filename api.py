@@ -863,44 +863,19 @@ def dashboard_save():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-@app.route("/admin/addkey", methods=["GET", "POST"])
+@app.route("/admin/addkey", methods=["POST"])
 def admin_add_key():
     """Manually add a key for a user. Admin only."""
-    if request.method == "GET":
-        # Simple form for manual key addition
-        return """
-        <!DOCTYPE html>
-        <html>
-        <head><title>Add Key - Vyron Admin</title></head>
-        <body style="font-family: Arial; padding: 20px; background: #1a1a1a; color: white;">
-            <h2>🔑 Manual Key Addition</h2>
-            <form method="POST">
-                <p><label>Password: <input type="password" name="password" required></label></p>
-                <p><label>User ID: <input type="text" name="user_id" required></label></p>
-                <p><label>Key: <input type="text" name="key" required></label></p>
-                <p><label>Type: 
-                    <select name="type">
-                        <option value="external">External</option>
-                        <option value="internal">Internal</option>
-                    </select>
-                </label></p>
-                <p><button type="submit">Add Key</button></p>
-            </form>
-        </body>
-        </html>
-        """
+    if not _check_admin_password(request):
+        return jsonify({"error": "Unauthorized"}), 403
     
-    # POST request
-    password = request.form.get("password", "").strip()
-    if password != DASHBOARD_PASSWORD:
-        return "❌ Unauthorized", 403
-    
-    user_id = str(request.form.get("user_id", "")).strip()
-    key = str(request.form.get("key", "")).strip()
-    key_type = str(request.form.get("type", "external")).strip()
+    body = request.get_json(force=True) or {}
+    user_id = str(body.get("user_id", "")).strip()
+    key = str(body.get("key", "")).strip()
+    key_type = str(body.get("type", "external")).strip()  # "external" or "internal"
     
     if not user_id or not key:
-        return "❌ Missing user_id or key", 400
+        return jsonify({"error": "Missing user_id or key"}), 400
     
     data = load_data()
     
@@ -921,17 +896,7 @@ def admin_add_key():
     
     save_data(data)
     
-    return f"""
-    <html>
-    <body style="font-family: Arial; padding: 20px; background: #1a1a1a; color: white;">
-        <h2>✅ Success!</h2>
-        <p>Key <code>{key}</code> has been added for user <code>{user_id}</code></p>
-        <p><a href="/admin/addkey">Add Another Key</a></p>
-        <p><strong>Test your key:</strong></p>
-        <p><a href="/check?key={key}&hwid=test123" target="_blank">Test Key</a></p>
-    </body>
-    </html>
-    """
+    return jsonify({"success": True, "message": f"Key {key} added for user {user_id}"}), 200
 
 
 @app.route("/lookup", methods=["GET"])
