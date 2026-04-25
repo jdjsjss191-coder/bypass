@@ -3939,12 +3939,21 @@ async def on_ready():
     client.add_view(InternalPanelView())
     client.add_view(MusicPanelView())
     client.add_view(MemberMusicPanelView())
+    client.add_view(ImprovedKeyPanelView())
     # Start background expiry check loop
     asyncio.create_task(expiry_check_loop())
     # Start tamper alert polling loop
     asyncio.create_task(tamper_alert_loop())
+    # Sync commands to all guilds instantly (guild sync is immediate, global takes ~1hr)
+    for guild in client.guilds:
+        try:
+            await tree.sync(guild=guild)
+            print(f"Synced commands to guild: {guild.name} ({guild.id})")
+        except Exception as e:
+            print(f"Failed to sync to guild {guild.name}: {e}")
+    # Also do global sync for any new servers
     await tree.sync()
-    print(f"Logged in as {client.user}")
+    print(f"Logged in as {client.user} — commands synced to {len(client.guilds)} guild(s)")
 
 TAMPER_CHANNEL_ID = 1492419723634409533
 API_BASE = os.environ.get("API_BASE", "http://localhost:8080")
