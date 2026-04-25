@@ -9,7 +9,7 @@ import asyncio
 from typing import Optional
 from api import start_api_thread
 
-# Don't access TOKEN at module level - will be accessed in main block with error handling
+TOKEN = os.environ["TOKEN"]
 ANNOUNCE_CHANNEL_ID = int(os.environ.get("ANNOUNCE_CHANNEL", "0"))
 OWNER_ROLE_NAME = os.environ.get("OWNER_ROLE", "Owner")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
@@ -4656,35 +4656,7 @@ async def serverstats(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
-# Bot startup function
-def start_bot():
-    """Start the Discord bot safely."""
-    TOKEN = os.environ.get("TOKEN")
-    if not TOKEN:
-        raise ValueError("TOKEN environment variable not set")
-    print("🤖 Starting Discord bot...")
-    client.run(TOKEN)
-
-# Main execution
-if __name__ == "__main__":
-    # If bot.py is run directly, start both API and bot
-    print("🚀 Starting Vyron Bot...")
-    print("🌐 Starting API server...")
-    start_api_thread()
-    
-    # Give API a moment to start
-    import time
-    time.sleep(2)
-    
-    # Start bot
-    try:
-        start_bot()
-    except Exception as e:
-        print(f"❌ Bot failed: {e}")
-        print("🌐 API server will continue running...")
-        # Keep API running
-        from api import run_api
-        run_api()
+client.run(TOKEN)
     try:
         TOKEN = os.environ["TOKEN"]
         client.run(TOKEN)
