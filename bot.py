@@ -2577,6 +2577,7 @@ async def notifyuser(interaction: discord.Interaction, key: str, message: str, s
             "key": key.strip(),
             "message": message.strip(),
             "sound_id": sound_id.strip(),
+            "discord_username": str(interaction.user),
             "secret": api_secret
         }).encode("utf-8")
         req = urllib.request.Request(
@@ -2590,9 +2591,9 @@ async def notifyuser(interaction: discord.Interaction, key: str, message: str, s
 
         if result.get("success"):
             embed = discord.Embed(
-                title="📨 Notification Queued",
+                title="Notification Queued",
                 description=f"Your message will appear in-game within 5 seconds.",
-                color=0x5080FF
+                color=0x5865F2
             )
             embed.add_field(name="Key", value=f"`{key[:24]}{'...' if len(key) > 24 else ''}`", inline=True)
             embed.add_field(name="Message", value=message, inline=False)
@@ -2602,10 +2603,10 @@ async def notifyuser(interaction: discord.Interaction, key: str, message: str, s
             await interaction.response.send_message(embed=embed, ephemeral=True)
         else:
             await interaction.response.send_message(
-                f"❌ Failed: {result.get('reason', 'Unknown error')}", ephemeral=True
+                f"Failed: {result.get('reason', 'Unknown error')}", ephemeral=True
             )
     except Exception as e:
-        await interaction.response.send_message(f"❌ Error contacting API: `{e}`", ephemeral=True)
+        await interaction.response.send_message(f"Error contacting API: `{e}`", ephemeral=True)
 
 
 @tree.command(name="broadcastingame", description="Send a notification to ALL users currently running the script")
