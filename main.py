@@ -12,8 +12,9 @@ from api import run_api
 def start_bot_safely():
     """Try to start the Discord bot in a separate thread. If it fails, log and continue."""
     try:
-        # Import bot only when we're ready to start it
-        import bot
+        # Import and start bot
+        from bot import start_bot
+        start_bot()
         print("✅ Discord bot started successfully")
     except Exception as e:
         print(f"❌ Discord bot failed to start: {e}")
@@ -26,11 +27,15 @@ def main():
     print("🌐 Starting API server...")
     
     # Start bot in background thread (optional)
-    bot_thread = threading.Thread(target=start_bot_safely, daemon=True)
-    bot_thread.start()
-    
-    # Give bot a moment to start
-    time.sleep(2)
+    if os.environ.get("TOKEN"):
+        print("🤖 Starting Discord bot in background...")
+        bot_thread = threading.Thread(target=start_bot_safely, daemon=True)
+        bot_thread.start()
+        
+        # Give bot a moment to start
+        time.sleep(3)
+    else:
+        print("⚠️ No TOKEN found - running API only")
     
     # Run API server (this will block and keep the service alive)
     print("🌐 API server running on main thread...")
