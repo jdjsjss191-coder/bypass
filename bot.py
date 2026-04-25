@@ -4656,4 +4656,33 @@ async def serverstats(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
-client.run(TOKEN)
+# Start API server first, then try to start bot
+if __name__ == "__main__":
+    # Always start the API server first
+    print("Starting API server...")
+    start_api_thread()
+    
+    # Give API a moment to start
+    import time
+    time.sleep(2)
+    
+    # Try to start the bot with error handling
+    try:
+        print("Starting Discord bot...")
+        client.run(TOKEN)
+    except Exception as e:
+        print(f"Bot failed to start: {e}")
+        print("API server will continue running...")
+        
+        # Keep the API running even if bot fails
+        try:
+            from api import run_api
+            print("Running API server directly...")
+            run_api()
+        except KeyboardInterrupt:
+            print("Shutting down...")
+        except Exception as api_error:
+            print(f"API server error: {api_error}")
+else:
+    # If imported, just run the bot normally
+    client.run(TOKEN)
