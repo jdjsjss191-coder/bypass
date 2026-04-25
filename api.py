@@ -381,12 +381,18 @@ def get_sessions():
                 else:
                     expiry_str = f"{secs_left // 86400}d"
 
+            # Get roblox_info for this key
+            roblox_info = data.get("key_roblox_info", {}).get(key, {})
+
             result.append({
                 "key": key,
                 "hwid": session["hwid"],
                 "last_seen": session["last_seen"],
                 "owner_uid": owner_uid,
                 "expiry": expiry_str,
+                "place_id": session.get("place_id", ""),
+                "job_id": session.get("job_id", ""),
+                "roblox_info": roblox_info,
             })
 
     return jsonify(result), 200
