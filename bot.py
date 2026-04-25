@@ -1552,17 +1552,22 @@ class KeyPanelView(discord.ui.View):
             await interaction.response.send_message("❌ You are blacklisted.", ephemeral=True)
             return
 
+        # Simple script code
+        script_code = f"shared.VyronNew = {{\n    ['Key'] = '{key}',\n}}\n\nloadstring(game:HttpGet('https://bypass-production-954a.up.railway.app/source'))()"
+
         embed = discord.Embed(
-            title="📋 Your Script Key",
-            description=f"Place this above your loader script:",
+            title="🎯 Vyron Script",
+            description="Copy and paste this into your executor:",
             color=0x5080FF
         )
-        embed.add_field(name="Key", value=f"```{key}```", inline=False)
-        if expiry:
-            embed.add_field(name="Expires", value=f"<t:{expiry}:R>", inline=True)
-        else:
-            embed.add_field(name="Expires", value="Lifetime", inline=True)
-        embed.set_footer(text="Vyron.cc • Keep this key private")
+        
+        embed.add_field(
+            name="📋 Script Code",
+            value=f"```lua\n{script_code}```",
+            inline=False
+        )
+        
+        embed.set_footer(text="Vyron.cc")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @discord.ui.button(label="⚙️ Reset HWID", style=discord.ButtonStyle.secondary, custom_id="panel_resethwid")
@@ -1756,25 +1761,61 @@ class ImprovedKeyPanelView(discord.ui.View):
 
     @discord.ui.button(label="Get Script", style=discord.ButtonStyle.primary, custom_id="panel_script", row=0)
     async def get_script(self, interaction: discord.Interaction, button: discord.ui.Button):
-        source_token = os.environ.get("SOURCE_TOKEN", "")
-        script_url = f"https://bypass-production-954a.up.railway.app/source?token={source_token}"
+        data = load_data()
+        uid = str(interaction.user.id)
+        
+        # Find user's key
+        user_key = None
+        
+        # Check permanent keys
+        if uid in data.get("keys", {}):
+            keys = data["keys"][uid]
+            if keys:
+                user_key = keys[0]  # Get first key
+        
+        # Check internal keys if no external key found
+        if not user_key and uid in data.get("keys_internal", {}):
+            keys = data["keys_internal"][uid]
+            if keys:
+                user_key = keys[0]  # Get first key
+        
+        # Check temp keys if no permanent key found
+        if not user_key:
+            for temp_keys in [data.get("temp_keys", {}), data.get("temp_keys_internal", {})]:
+                if uid in temp_keys:
+                    for temp_key in temp_keys[uid]:
+                        if temp_key.get("expiry", 0) > int(time.time()):
+                            user_key = temp_key["key"]
+                            break
+                    if user_key:
+                        break
+        
+        if not user_key:
+            embed = discord.Embed(
+                title="❌ No Key Found",
+                description="You don't have any active keys. Please redeem a key first.",
+                color=0xFF5555
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+        
+        # Simple script code
+        script_code = f"shared.VyronNew = {{\n    ['Key'] = '{user_key}',\n}}\n\nloadstring(game:HttpGet('https://bypass-production-954a.up.railway.app/source'))()"
         
         embed = discord.Embed(
-            title="Vyron Script",
-            description=f"Load the script using this URL:\n```lua\nloadstring(game:HttpGet('{script_url}'))()```",
+            title="🎯 Vyron Script",
+            description="Copy and paste this into your executor:",
             color=0x5865F2
         )
+        
         embed.add_field(
-            name="Instructions",
-            value=(
-                "1. Copy the code above\n"
-                "2. Paste it into your executor\n"
-                "3. Make sure your key is set in the config\n"
-                "4. Execute and enjoy"
-            ),
+            name="📋 Script Code",
+            value=f"```lua\n{script_code}```",
             inline=False
         )
+        
         embed.set_footer(text="Vyron.cc")
+        
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @discord.ui.button(label="Reset HWID", style=discord.ButtonStyle.danger, custom_id="panel_hwid", row=0)
