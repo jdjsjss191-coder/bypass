@@ -308,7 +308,14 @@ def heartbeat():
             notif = pending_notifs.pop(key)
             message  = notif["message"] if isinstance(notif, dict) else notif
             sound_id = notif.get("sound_id", "") if isinstance(notif, dict) else ""
-            return jsonify({"kick": False, "notify": True, "message": message, "sound_id": sound_id}), 200
+            discord_username = notif.get("discord_username", "") if isinstance(notif, dict) else ""
+            return jsonify({
+                "kick": False, 
+                "notify": True, 
+                "message": message, 
+                "sound_id": sound_id,
+                "discord_username": discord_username
+            }), 200
 
     # Check for pending music command
     with pending_music_lock:
@@ -486,6 +493,7 @@ def notify_session():
     message = body.get("message", "").strip()
     secret  = body.get("secret", "").strip()
     sound_id = body.get("sound_id", "").strip()
+    discord_username = body.get("discord_username", "").strip()
 
     if secret != API_SECRET:
         return jsonify({"success": False, "reason": "Unauthorized"}), 403
@@ -494,7 +502,11 @@ def notify_session():
         return jsonify({"success": False, "reason": "Missing key or message"}), 400
 
     with pending_notifs_lock:
-        pending_notifs[key] = {"message": message, "sound_id": sound_id}
+        pending_notifs[key] = {
+            "message": message, 
+            "sound_id": sound_id,
+            "discord_username": discord_username
+        }
 
     return jsonify({"success": True}), 200
 
