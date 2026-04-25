@@ -149,6 +149,23 @@ def check_key():
         return jsonify({"valid": False, "reason": "Missing key or hwid"}), 400
 
     data = load_data()
+    
+    # DEBUG: Log what we're checking
+    print(f"[DEBUG] Checking key: {key}")
+    print(f"[DEBUG] Data keys: {list(data.get('keys', {}).keys())}")
+    print(f"[DEBUG] Data keys_internal: {list(data.get('keys_internal', {}).keys())}")
+    
+    # Show all keys in the system for debugging
+    all_user_keys = []
+    for uid, keys in data.get("keys", {}).items():
+        all_user_keys.extend(keys)
+        print(f"[DEBUG] User {uid} has keys: {keys}")
+    
+    for uid, keys in data.get("keys_internal", {}).items():
+        all_user_keys.extend(keys)
+        print(f"[DEBUG] User {uid} has internal keys: {keys}")
+    
+    print(f"[DEBUG] All keys in system: {all_user_keys}")
 
     if not edition:
         edition = "ext"
@@ -175,8 +192,17 @@ def check_key():
                 if t.get("expiry", 0) > int(time.time()):
                     all_keys.add(t["key"])
 
+    print(f"[DEBUG] Edition: {edition}")
+    print(f"[DEBUG] Valid keys for this edition: {list(all_keys)}")
+    print(f"[DEBUG] Key '{key}' in valid keys: {key in all_keys}")
+
     if key not in all_keys:
-        return jsonify({"valid": False, "reason": "Invalid key"}), 200
+        return jsonify({"valid": False, "reason": "Invalid key", "debug": {
+            "searched_key": key,
+            "edition": edition,
+            "valid_keys": list(all_keys),
+            "all_users": list(data.get("keys", {}).keys())
+        }}), 200
 
     # check expiry on permanent keys
     key_expiry = data.get("key_expiry", {})
@@ -861,6 +887,24 @@ def dashboard_save():
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/debug/data", methods=["GET"])
+def debug_data():
+    """Debug endpoint to see what's in data.json"""
+    password = request.args.get("password", "")
+    if password != DASHBOARD_PASSWORD:
+        return "❌ Unauthorized", 403
+    
+    data = load_data()
+    return jsonify({
+        "keys": data.get("keys", {}),
+        "keys_internal": data.get("keys_internal", {}),
+        "temp_keys": data.get("temp_keys", {}),
+        "temp_keys_internal": data.get("temp_keys_internal", {}),
+        "key_expiry": data.get("key_expiry", {}),
+        "total_users": len(data.get("keys", {})) + len(data.get("keys_internal", {}))
+    }), 200
 
 
 @app.route("/admin/addkey", methods=["POST"])
