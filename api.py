@@ -863,6 +863,42 @@ def dashboard_save():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route("/admin/addkey", methods=["POST"])
+def admin_add_key():
+    """Manually add a key for a user. Admin only."""
+    if not _check_admin_password(request):
+        return jsonify({"error": "Unauthorized"}), 403
+    
+    body = request.get_json(force=True) or {}
+    user_id = str(body.get("user_id", "")).strip()
+    key = str(body.get("key", "")).strip()
+    key_type = str(body.get("type", "external")).strip()  # "external" or "internal"
+    
+    if not user_id or not key:
+        return jsonify({"error": "Missing user_id or key"}), 400
+    
+    data = load_data()
+    
+    # Add to appropriate key pool
+    if key_type == "internal":
+        data.setdefault("keys_internal", {})[user_id] = data.get("keys_internal", {}).get(user_id, [])
+        if key not in data["keys_internal"][user_id]:
+            data["keys_internal"][user_id].append(key)
+    else:
+        data.setdefault("keys", {})[user_id] = data.get("keys", {}).get(user_id, [])
+        if key not in data["keys"][user_id]:
+            data["keys"][user_id].append(key)
+    
+    # Set as lifetime key
+    data.setdefault("key_expiry", {})[key] = None
+    data.setdefault("key_created", {})[key] = int(time.time())
+    data.setdefault("key_generated_by", {})[key] = "manual_admin"
+    
+    save_data(data)
+    
+    return jsonify({"success": True, "message": f"Key {key} added for user {user_id}"}), 200
+
+
 @app.route("/lookup", methods=["GET"])
 def lookup_key():
     """Return full info about a key. Requires X-Admin-Password header."""
