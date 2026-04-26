@@ -342,12 +342,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .logout { color: #ff5555; font-size: 13px; text-decoration: none; }
   .logout:hover { text-decoration: underline; }
   .container { flex: 1; display: flex; flex-direction: column; padding: 20px 24px; gap: 14px; }
-  .toolbar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
+  .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .btn {
     padding: 9px 20px;
     border: none;
@@ -360,12 +355,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .btn:hover { opacity: 0.85; }
   .btn-save { background: #5080ff; color: #fff; }
   .btn-discard { background: #2a2a3d; color: #aaa; }
-  .status {
-    font-size: 12px;
-    padding: 6px 12px;
-    border-radius: 5px;
-    display: none;
-  }
+  .status { font-size: 12px; padding: 6px 12px; border-radius: 5px; display: none; }
   .status.success { background: #1a3a1a; color: #4caf50; display: inline-block; }
   .status.error   { background: #3a1a1a; color: #f44336; display: inline-block; }
   .meta { font-size: 12px; color: #555; margin-left: auto; }
@@ -404,15 +394,26 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <span id="status" class="status"></span>
     <span class="meta" id="savedAt">{{ saved_at }}</span>
   </div>
-  <textarea id="editor" spellcheck="false">{{ source }}</textarea>
+  <textarea id="editor" spellcheck="false" placeholder="Loading..."></textarea>
 </div>
 <script>
-  const original = document.getElementById('editor').value;
+  let original = '';
 
   function updateLineCount() {
     const lines = document.getElementById('editor').value.split('\\n').length;
     document.getElementById('lineCount').textContent = lines + ' lines';
   }
+
+  // Load source via API to avoid Jinja template conflicts with Lua braces
+  fetch('/dashboard/load')
+    .then(r => r.json())
+    .then(d => {
+      const editor = document.getElementById('editor');
+      editor.value = d.source || '';
+      original = editor.value;
+      updateLineCount();
+    })
+    .catch(() => showStatus('❌ Failed to load source', 'error'));
 
   document.getElementById('editor').addEventListener('input', updateLineCount);
   document.getElementById('editor').addEventListener('keydown', function(e) {
@@ -427,8 +428,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       saveSource();
     }
   });
-
-  updateLineCount();
 
   function showStatus(msg, type) {
     const el = document.getElementById('status');
@@ -447,6 +446,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .then(r => r.json())
     .then(d => {
       if (d.success) {
+        original = content;
         showStatus('✅ Published successfully', 'success');
         document.getElementById('savedAt').textContent = 'Last saved: ' + new Date().toLocaleTimeString();
       } else {
@@ -539,15 +539,24 @@ def dashboard():
     if not session.get("authed"):
         return redirect("/dashboard/login")
 
-    source = ""
     saved_at = "Never"
     if os.path.exists(SOURCE_FILE):
-        with open(SOURCE_FILE, "r", encoding="utf-8") as f:
-            source = f.read()
         mtime = os.path.getmtime(SOURCE_FILE)
         saved_at = "Last saved: " + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime))
 
-    return render_template_string(DASHBOARD_HTML, source=source, saved_at=saved_at)
+    # Serve the editor shell — source is loaded via /dashboard/load to avoid Jinja escaping issues
+    return render_template_string(DASHBOARD_HTML, saved_at=saved_at)
+
+
+@app.route("/dashboard/load", methods=["GET"])
+def dashboard_load():
+    if not session.get("authed"):
+        return jsonify({"error": "Unauthorized"}), 403
+    source = ""
+    if os.path.exists(SOURCE_FILE):
+        with open(SOURCE_FILE, "r", encoding="utf-8") as f:
+            source = f.read()
+    return jsonify({"source": source})
 
 
 @app.route("/dashboard/login", methods=["GET", "POST"])
